@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+gradio
+torch
+diffusers
+transformers
+accelerate
+xformers
+Pillow
+numpy
