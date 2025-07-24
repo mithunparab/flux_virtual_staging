@@ -20,7 +20,12 @@ class StagingModel:
             self.pipe.enable_xformers_memory_efficient_attention()
             print("xformers memory-efficient attention enabled.")
         except ImportError:
-            print("xformers not installed. For better performance, install it with 'pip install xformers'")
+            print("[Error] xformers not installed. For better performance, install it with 'pip install xformers'")
+        except AttributeError:
+            print("[Error] Your version of `diffusers` is too old to support `enable_xformers_memory_efficient_attention()`.")
+            print("For better performance, please upgrade with: `pip install --upgrade diffusers`")
+        except Exception as e:
+            print(f"An unexpected error occurred while enabling xformers: {e}")
         
         print("Pipeline loaded and configured.")
 

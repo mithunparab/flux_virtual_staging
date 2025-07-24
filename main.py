@@ -3,7 +3,7 @@ from queue import Queue
 from fastapi import FastAPI
 import gradio as gr
 import uvicorn
-
+from fastapi.responses import RedirectResponse
 from model_pipeline import StagingModel
 from worker import processing_worker
 from api import router as api_router, set_queues as api_set_queues
@@ -35,6 +35,10 @@ if __name__ == "__main__":
     gradio_app = create_ui()
     
     app = gr.mount_gradio_app(app, gradio_app, path="/ui")
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return RedirectResponse(url="/ui")
 
     print(f"Server starting. API Docs at http://{API_HOST}:{API_PORT}/docs")
     print(f"Gradio UI at http://{API_HOST}:{API_PORT}/ui")

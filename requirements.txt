@@ -3,9 +3,11 @@ uvicorn[standard]
 python-multipart
 gradio
 torch
-diffusers
-transformers
+git+https://github.com/huggingface/diffusers.git
 accelerate
+safetensors
+sentencepiece
+transformers
 xformers
 Pillow
 numpy
