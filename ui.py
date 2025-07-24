@@ -49,7 +49,7 @@ def create_ui():
     css="""#col-container { margin: 0 auto; max-width: 960px; }"""
     with gr.Blocks(css=css, title="Virtual Stager") as demo:
         with gr.Column(elem_id="col-container"):
-            gr.Markdown("# Virtual Stager - FLUX.1\nUpload an empty room image and provide a prompt to stage it.")
+            gr.Markdown("# Virtual Stager - FLUX.1 Kontext \nUpload an empty room image and provide a prompt to stage it.")
             with gr.Row():
                 with gr.Column():
                     input_image = gr.Image(label="Empty Room Image", type="pil", height=400)
