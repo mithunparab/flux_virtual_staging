@@ -11,3 +11,6 @@ transformers
 xformers
 Pillow
 numpy
+protobuf
+spaces
+gradio[mcp]
