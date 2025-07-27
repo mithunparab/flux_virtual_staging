@@ -1,7 +1,6 @@
 ARG CUDA_VERSION="12.1.1"
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
 
-ARG HUGGING_FACE_HUB_TOKEN
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -17,20 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install --no-cache-dir --upgrade pip
 
+
 WORKDIR /app
 
 ENV HF_HOME=/app/cache
 ENV HUGGING_FACE_HUB_CACHE=/app/cache
-ENV HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
 ENV HOME=/app
 ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 --extra-index-url https://download.pytorch.org/whl/cu128
-
 RUN pip install --no-cache-dir -r requirements.txt
-
 RUN pip install --no-cache-dir runpod
 
 COPY . .
