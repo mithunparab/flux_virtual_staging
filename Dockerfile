@@ -31,6 +31,8 @@ RUN pip install --no-cache-dir runpod
 
 COPY . .
 
+RUN huggingface-cli login --token $HUGGING_FACE_HUB_TOKEN
+
 RUN python -c "from rp_handler import model"
 
 CMD ["python", "-u", "rp_handler.py"]
