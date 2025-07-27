@@ -29,41 +29,45 @@ This application provides a robust server for virtual home staging. It exposes b
 
 ## Running the Server
 
-Start the application by running `main.py`:
+**Step 1: Install `localtunnel`**
+
+You need Node.js and `npm` installed on your server. Most Linux distributions have it. First, install `npm` if you don't have it:
+
+```bash
+sudo apt update && sudo apt install npm -y
+```
+
+Then, use `npm` to install `localtunnel` globally:
+
+```bash
+sudo npm install -g localtunnel
+```
+
+**Step 2: Run Your Python App**
+In one SSH terminal, start your server as usual:
 
 ```bash
 python main.py
 ```
 
-The server will be available locally at `http://127.0.0.1:8000`.
+Your app is now running on `localhost:8000`.
 
-## Exposing Your Server for Remote Access
+**Step 3: Start the Tunnel**
 
-### Cloudflare Tunnel
+In a **second SSH terminal**, run this simple command:
 
-1. **Install `cloudflared`:** Follow the official [Cloudflare Tunnels guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/install-and-setup/tunnel-guide/).
+```bash
+echo "Password/Endpoint IP for localtunnel is: $(curl -s https://ipv4.icanhazip.com | tr -d '\n')"
 
-2. **Authenticate `cloudflared`:**
+lt --port 8000
+```
 
-    ```bash
-    cloudflared tunnel login
-    ```
+The output will immediately give you your public URL:
 
-3. **Create a tunnel:** Give it a memorable name.
-
-    ```bash
-    cloudflared tunnel create virtual-stager-tunnel
-    ```
-
-    This will generate a credentials file.
-
-4. **Run the tunnel:** Point it to your local service running on port 8000.
-
-    ```bash
-    cloudflared tunnel --url http://localhost:8000
-    ```
-
-`cloudflared` will now output a public `.trycloudflare.com` URL. This is your public endpoint! It's secure, stable, and ready to be shared.
+```
+Password/Endpoint IP for localtunnel is: 123.456.789.012
+your url is: https://some-random-adjective-and-noun.loca.lt
+```
 
 ## How to Use the API
 
