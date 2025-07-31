@@ -15,10 +15,14 @@ def processing_worker(model: StagingModel, job_queue: Queue, results_store: dict
                 seed=job_data["seed"],
                 guidance_scale=job_data["guidance_scale"],
                 steps=job_data["steps"],
-                negative_prompt=job_data["negative_prompt"]
+                negative_prompt=job_data["negative_prompt"],
+                aspect_ratio=job_data.get("aspect_ratio", "default"),
+                super_resolution=job_data.get("super_resolution", "traditional"),
+                sr_scale=job_data.get("sr_scale", 2)
             )
             
-            results_store[job_id] = result
+            output_extension = job_data.get("output_extension", "jpeg")
+            results_store[job_id] = (result, output_extension)
             print(f"Worker finished job: {job_id}")
 
         except Exception as e:

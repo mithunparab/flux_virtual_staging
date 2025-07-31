@@ -1,0 +1,20 @@
+# Web and API
+fastapi==0.116.1
+uvicorn[standard]
+python-multipart
+
+# Gradio UI - [mcp] includes extra dependencies
+gradio[mcp]==5.38.1
+
+# Hugging Face ecosystem
+transformers==4.53.3
+accelerate
+safetensors
+sentencepiece
+spaces
+# Install diffusers from the specific git commit
+diffusers @ git+https://github.com/huggingface/diffusers.git@f36ba9f094cb906d0e580b729777f0f20b01da74
+
+# Other dependencies
+Pillow
+protobuf
