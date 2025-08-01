@@ -9,6 +9,7 @@ os.environ["HOME"] = "/app"
 from pathlib import Path
 Path.home = lambda: Path("/app")
 
+
 from model_pipeline import StagingModel
 from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
 
@@ -17,13 +18,7 @@ print("Initializing StagingModel...")
 model = StagingModel()
 print("StagingModel initialized successfully.")
 
-
-
 def handler(job):
-    """
-    The handler function called by RunPod for each job.
-    It takes a job payload, runs inference, and returns the result.
-    """
     job_input = job.get('input', {})
 
     image_base64 = job_input.get('image_base64')
@@ -49,37 +44,37 @@ def handler(job):
         "steps": int(job_input.get('steps', DEFAULT_STEPS)),
         "aspect_ratio": job_input.get('aspect_ratio', "default"),
         "super_resolution": job_input.get('super_resolution', "traditional"),
-        "sr_scale": int(job_input.get('sr_scale', 2))
+        "sr_scale": int(job_input.get('sr_scale', 2)),
+        "num_outputs": int(job_input.get('num_outputs', 1)) 
     }
-    
-    if params["seed"] == -1:
-        params["seed"] = random.randint(0, MAX_SEED)
 
-    print(f"Starting generation with seed: {params['seed']}")
-    result = model.generate(**params)
+    print(f"Starting batch generation of {params['num_outputs']} with base seed: {params['seed']}")
+    result_images, used_seeds = model.generate(**params)
 
-    if isinstance(result, Exception):
-        print(f"Model generation failed: {result}")
-        return {"error": f"Model generation failed: {result}"}
+    if isinstance(result_images, Exception):
+        print(f"Model generation failed: {result_images}")
+        return {"error": f"Model generation failed: {result_images}"}
 
     output_extension = job_input.get('output_extension', 'jpeg').lower()
     format_info = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
     image_format = format_info['format']
     
-    if image_format in ['JPEG', 'BMP'] and result.mode == 'RGBA':
-        result = result.convert('RGB')
+    base64_images = []
+    for img in result_images:
+        if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA':
+            img = img.convert('RGB')
         
-    buffered = io.BytesIO()
-    result.save(buffered, format=image_format)
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        buffered = io.BytesIO()
+        img.save(buffered, format=image_format)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        base64_images.append(img_str)
 
-    print("Generation complete.")
+    print(f"Batch generation of {len(base64_images)} images complete.")
     
     return {
-        "image_base64": img_str,
-        "seed": params["seed"]
+        "images": base64_images,
+        "seeds": used_seeds
     }
-
 
 if __name__ == "__main__":
     print("Starting RunPod serverless worker...")

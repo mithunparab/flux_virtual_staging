@@ -3,8 +3,9 @@ import gc
 from PIL import Image
 from diffusers import FluxKontextPipeline, FluxTransformer2DModel, GGUFQuantizationConfig
 from contextlib import contextmanager
+import random
 
-from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT
+from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 
 class StagingModel:
     def __init__(self):
@@ -67,38 +68,50 @@ class StagingModel:
             gc.collect()
             print("GPU memory cleaned up after inference.")
 
-    def generate(self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float, steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str, sr_scale: int):
+    def generate(self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float, steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str, sr_scale: int, num_outputs: int = 1):
         full_prompt = f"{SYSTEM_PROMPT}{prompt}"
         print(f"Using full prompt: {full_prompt}")
         print(f"Using negative prompt: {negative_prompt}")
 
         with self._inference_context():
             try:
-                with torch.no_grad():
-                    input_image = input_image.convert("RGB")
-                    input_image = self._resize_image(input_image, aspect_ratio)
+                input_image = input_image.convert("RGB")
+                input_image = self._resize_image(input_image, aspect_ratio)
+                if seed != -1:
+                    seeds = [seed + i for i in range(num_outputs)]
+                else:
+                    seeds = [random.randint(0, MAX_SEED) for _ in range(num_outputs)]
+                
+                print(f"Generating a batch of {num_outputs} with seeds: {seeds}")
 
-                    image_result = self.pipe(
+                generators = [torch.Generator("cuda").manual_seed(s) for s in seeds]
+
+                with torch.no_grad():
+                    batched_images = self.pipe(
                         image=input_image,
-                        prompt=full_prompt,
-                        negative_prompt=negative_prompt,
+                        prompt=[full_prompt] * num_outputs,
+                        negative_prompt=[negative_prompt] * num_outputs,
                         guidance_scale=guidance_scale,
                         width=input_image.size[0],
                         height=input_image.size[1],
                         num_inference_steps=steps,
-                        generator=torch.Generator("cuda").manual_seed(seed),
-                    ).images[0]
+                        generator=generators,
+                    ).images
                 
+                final_images = []
                 if super_resolution == "traditional" and sr_scale > 1:
-                    print(f"Applying traditional super resolution with scale x{sr_scale}")
-                    new_width = image_result.width * sr_scale
-                    new_height = image_result.height * sr_scale
-                    image_result = image_result.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-                return image_result
+                    print(f"Applying traditional super resolution with scale x{sr_scale} to {len(batched_images)} images")
+                    for img in batched_images:
+                        new_width = img.width * sr_scale
+                        new_height = img.height * sr_scale
+                        final_images.append(img.resize((new_width, new_height), Image.Resampling.LANCZOS))
+                else:
+                    final_images = batched_images
+                
+                return final_images, seeds
 
             except Exception as e:
                 print(f"An error occurred during inference: {e}")
                 import traceback
                 traceback.print_exc()
-                return e
+                return e, []
