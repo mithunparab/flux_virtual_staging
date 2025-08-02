@@ -49,34 +49,15 @@ async def _process_job_and_get_result(job_data: dict):
 
     while time.time() - start_time < API_TIMEOUT:
         if job_id in results_store:
-            result_payload, output_extension_value = results_store.pop(job_id)
+            result_payload = results_store.pop(job_id)
 
             if isinstance(result_payload, Exception):
-                raise HTTPException(status_code=500, detail=f"Model inference failed: {result_payload}")
+                raise HTTPException(status_code=500, detail=f"Worker process failed: {result_payload}")
 
-            result_images, used_seeds = result_payload
-            
-            base64_images = []
-            requested_format = output_extension_value.lower()
-            image_format = SUPPORTED_FORMATS.get(requested_format, SUPPORTED_FORMATS['jpeg'])['format']
-
-            for img in result_images:
-                if isinstance(img, Image.Image):
-                    if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA':
-                        img = img.convert('RGB')
-                    
-                    img_byte_arr = io.BytesIO()
-                    img.save(img_byte_arr, format=image_format)
-                    img_byte_arr.seek(0)
-                    base64_images.append(base64.b64encode(img_byte_arr.getvalue()).decode("utf-8"))
-                else:
-                    raise HTTPException(status_code=500, detail="Model returned an invalid object in the image list.")
-            
-            return JSONResponse(content={"images": base64_images, "seeds": used_seeds})
+            return JSONResponse(content=result_payload)
 
         await asyncio.sleep(0.1)
     raise HTTPException(status_code=504, detail="Request timed out. The server is busy. Please try again later.")
-
 
 @router.post("/stage_upload", summary="Stage an Image via File Upload", response_model=BatchStageResponse)
 async def stage_image_upload(
