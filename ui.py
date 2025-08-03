@@ -41,17 +41,22 @@ async def ui_infer(input_image, prompt, negative_prompt, seed, randomize_seed, g
             for i in progress.tqdm(range(100), desc=f"Generating Batch of {num_outputs}..."):
                 await asyncio.sleep(0.01)
                 
-            result_payload, _ = results_store.pop(job_id)
+            result_payload = results_store.pop(job_id)
             
             if isinstance(result_payload, Exception):
                  raise gr.Error(f"Worker failed: {result_payload}")
             
-            result_images, used_seeds = result_payload
+            base64_images_str = result_payload.get("images", [])
+            used_seeds = result_payload.get("seeds", [])
 
-            if isinstance(result_images, Exception):
-                raise gr.Error(f"Model inference failed: {result_images}")
-            
-            return result_images, used_seeds
+            final_images = []
+            for b64_str in base64_images_str:
+                image_bytes = base64.b64decode(b64_str)
+                image = Image.open(io.BytesIO(image_bytes))
+                final_images.append(image)
+
+            return final_images, used_seeds
+
             
         queue_pos = job_queue.qsize() + 1
         progress(0.1, desc=f"Waiting in Queue (Position: {queue_pos})...")

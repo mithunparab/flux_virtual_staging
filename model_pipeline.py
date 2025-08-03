@@ -2,15 +2,15 @@ import torch
 import gc
 import os
 from PIL import Image
-from diffusers import FluxKontextPipeline, FluxTransformer2DModel, GGUFQuantizationConfig
-from diffusers.quantizers.quantization_utils import TorchAoConfig
+from diffusers import FluxKontextPipeline, DiffusionPipeline, TorchAoConfig
+from diffusers.quantizers import PipelineQuantizationConfig
 import random
 
 from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 
 class StagingModel:
     def __init__(self):
-        gpu_type = os.environ.get("GPU_TYPE", "L40").upper()
+        gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         if gpu_type == "H100":
             print("Initializing model with H100-specific optimizations...")
             self.pipe = self._load_model_h100()
@@ -25,13 +25,10 @@ class StagingModel:
         Focus: Great speed with FP8, keeping VRAM in check.
         """
         print("Loading FLUX.1 pipeline for FP8 inference on L40...")
-        
-        quant_config = TorchAoConfig("float8_e4m3fn")
 
         pipe = FluxKontextPipeline.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.bfloat16,
-            quantization_config=quant_config,
         )
         pipe.to("cuda")
 
@@ -54,7 +51,9 @@ class StagingModel:
         """
         print("Loading FLUX.1 pipeline for FP8 inference on H100...")
         
-        quant_config = TorchAoConfig("float8_e4m3fn")
+        quant_config = PipelineQuantizationConfig(
+            quant_mapping={"transformer": TorchAoConfig("float8dq_e4m3_row")}
+        )
 
         pipe = FluxKontextPipeline.from_pretrained(
             MODEL_ID,
