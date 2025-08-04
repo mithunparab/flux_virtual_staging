@@ -11,74 +11,32 @@ from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 class StagingModel:
     def __init__(self):
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
-        if gpu_type == "H100":
-            print("Initializing model with H100-specific optimizations...")
-            self.pipe = self._load_model_h100()
-        else:
-            print("Initializing model with L40/Ada optimizations...")
-            self.pipe = self._load_model_l40()
-        print("StagingModel initialized and pipeline loaded onto GPU.")
+        print(f"Initializing StagingModel for {gpu_type} using pre-compiled TensorRT engine.")
+        self.pipe = self._load_model_from_engine(gpu_type)
+        print("StagingModel initialized and TensorRT pipeline loaded onto GPU.")
 
-    def _load_model_l40(self):
+    def _load_model_from_engine(self, gpu_type: str):
         """
-        Optimized for L40 GPUs (Ada/Hopper Arch).
-        Focus: Great speed with FP8, keeping VRAM in check.
+        Loads a pipeline with a pre-compiled TensorRT engine for the transformer.
         """
-        print("Loading FLUX.1 pipeline for FP8 inference on L40...")
+        engine_path = f"./engines/{gpu_type}/transformer_{gpu_type.lower()}.ts"
+        if not os.path.exists(engine_path):
+            raise FileNotFoundError(f"FATAL: Compiled engine not found at {engine_path}. Please run compile_engine.py first.")
 
+        print(f"Loading base pipeline structure...")
         pipe = FluxKontextPipeline.from_pretrained(
             MODEL_ID,
             torch_dtype=torch.bfloat16,
+            ignore_mismatched_sizes=True 
         )
+
+        print(f"Loading compiled TensorRT engine from: {engine_path}")
+        trt_transformer = torch.jit.load(engine_path)
+        
+        pipe.transformer = trt_transformer
         pipe.to("cuda")
-
-        try:
-            pipe.enable_xformers_memory_efficient_attention()
-            print("xformers memory-efficient attention enabled.")
-        except Exception as e:
-            print(f"Could not enable xformers: {e}")
         
-        print("Compiling the transformer with torch.compile (max-autotune)...")
-        pipe.transformer.compile(fullgraph=True, mode="max-autotune")
-        
-        print("L40 pipeline loaded, quantized, and compiled successfully.")
-        return pipe
-    
-    def _load_model_h100(self):
-        """
-        Optimized for H100 GPUs.
-        Focus: Squeeze every ounce of performance. Aggressive compilation.
-        """
-        print("Loading FLUX.1 pipeline for FP8 inference on H100...")
-        
-        quant_config = PipelineQuantizationConfig(
-            quant_mapping={"transformer": TorchAoConfig("float8dq_e4m3_row")}
-        )
-
-        pipe = FluxKontextPipeline.from_pretrained(
-            MODEL_ID,
-            torch_dtype=torch.bfloat16,
-            quantization_config=quant_config,
-        )
-        pipe.to("cuda")
-
-        try:
-            pipe.enable_xformers_memory_efficient_attention()
-            print("xformers memory-efficient attention enabled.")
-        except Exception as e:
-            print(f"Could not enable xformers: {e}")
-        
-        print("Compiling the transformer with torch.compile (max-autotune)...")
-        pipe.transformer.compile(fullgraph=True, mode="max-autotune")
-        
-        print("Compiling the VAE decoder with torch.compile (reduce-overhead)...")
-        try:
-            pipe.vae.decode = torch.compile(pipe.vae.decode, mode="reduce-overhead", fullgraph=True)
-            print("VAE decoder compiled successfully.")
-        except Exception as e:
-            print(f"Could not compile VAE decoder: {e}")
-            
-        print("H100 pipeline loaded, quantized, and aggressively compiled.")
+        print("Pipeline with TensorRT engine is ready.")
         return pipe
     
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
