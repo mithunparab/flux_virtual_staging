@@ -14,6 +14,7 @@ Pillow
 numpy
 protobuf
 runpod
-
+torch-tensorrt
+torchao
 # Performance - Highly recommended for diffusers
 xformers
