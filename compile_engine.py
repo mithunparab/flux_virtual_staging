@@ -2,69 +2,95 @@ import torch
 import os
 import argparse
 from diffusers import FluxKontextPipeline
-from diffusers.quantizers import PipelineQuantizationConfig, TorchAoConfig
 import torch_tensorrt
+from torch.export import export
 
-def compile_model_to_trt(gpu_type: str, output_path: str = "./engine"):
-    """
-    Loads the FLUX.1 model, applies hardware-specific optimizations (FP8 for H100),
-    compiles it with TensorRT, and saves the engine.
-    """
-    print(f"Starting compilation for GPU_TYPE: {gpu_type}")
-    
+def compile_model_to_trt(gpu_type: str, output_path: str):
+    print(f"Starting compilation for black-forest-labs/FLUX.1-Kontext-dev.")
+
     dtype = torch.bfloat16
+    model_id = "black-forest-labs/FLUX.1-Kontext-dev"
+    DEVICE = "cuda:0"
+
     pipeline_kwargs = {
-        "pretrained_model_name_or_path": "black-forest-labs/FLUX.1-Kontext-dev",
+        "pretrained_model_name_or_path": model_id,
         "torch_dtype": dtype,
     }
-
-    if gpu_type.upper() == "H100":
-        print("Applying H100-specific FP8 quantization...")
-        quant_config = PipelineQuantizationConfig(
-            quant_mapping={"transformer": TorchAoConfig("float8dq_e4m3_row")}
-        )
-        pipeline_kwargs["quantization_config"] = quant_config
     
     pipe = FluxKontextPipeline.from_pretrained(**pipeline_kwargs)
-    pipe.to("cuda")
-    print("Original pipeline loaded onto GPU.")
+    pipe.to(DEVICE)
+    print("Standard BF16 Kontext pipeline loaded on GPU.")
 
     transformer = pipe.transformer
-    transformer.eval() 
+    transformer.eval()
 
-    text_embeds = torch.randn(2, 1, 1536, dtype=dtype, device="cuda")
-    pooled_embeds = torch.randn(2, 1, 1280, dtype=dtype, device="cuda")
-    latents = torch.randn(2, 4, 128, 128, dtype=dtype, device="cuda") # 1024/8
-    img_ids = torch.ones(2, dtype=torch.long, device="cuda")
-    timestep = torch.randn(2, dtype=torch.long, device="cuda")
+    IN_CHANNELS = transformer.x_embedder.in_channels
+    D_EMBED = transformer.context_embedder.in_features
+    D_COND = transformer.pooled_projection_embedder.in_features
     
-    print("Compiling transformer with TensorRT...")
-    trt_transformer_ts = torch.jit.trace(transformer, (text_embeds, pooled_embeds, latents, img_ids, timestep))
+    print(f"Determined model dimensions: in_channels={IN_CHANNELS}, d_embed={D_EMBED}, d_cond={D_COND}")
+
+    VAE_DOWNSAMPLE_FACTOR = 8
+    height = 1024
+    width = 1024
+    batch_size = 2
     
-    trt_transformer = torch_tensorrt.compile(
-        trt_transformer_ts,
-        inputs=[
-            torch_tensorrt.Input(min_shape=(1, 1, 1536), opt_shape=(2, 1, 1536), max_shape=(4, 1, 1536), dtype=dtype),
-            torch_tensorrt.Input(min_shape=(1, 1, 1280), opt_shape=(2, 1, 1280), max_shape=(4, 1, 1280), dtype=dtype),
-            torch_tensorrt.Input(min_shape=(1, 4, 64, 64), opt_shape=(2, 4, 128, 128), max_shape=(4, 4, 128, 128), dtype=dtype),
-            torch_tensorrt.Input(min_shape=(1,), opt_shape=(2,), max_shape=(4,), dtype=torch.long),
-            torch_tensorrt.Input(min_shape=(1,), opt_shape=(2,), max_shape=(4,), dtype=torch.long),
-        ],
-        enabled_precisions={dtype},
-        workspace_size=1 << 32, 
-        truncate_long_and_double=True,
+    latent_height = height // VAE_DOWNSAMPLE_FACTOR
+    latent_width = width // VAE_DOWNSAMPLE_FACTOR
+    
+    BATCH = torch.export.Dim("batch", min=1, max=batch_size)
+    
+    dummy_inputs = {
+        "hidden_states": torch.randn(batch_size, IN_CHANNELS, latent_height, latent_width, dtype=dtype, device=DEVICE),
+        "text_embeds": torch.randn(batch_size, 1, D_EMBED, dtype=dtype, device=DEVICE),
+        "pooled_projections": torch.randn(batch_size, 1, D_COND, dtype=dtype, device=DEVICE),
+        "img_ids": torch.ones(batch_size, dtype=torch.long, device=DEVICE),
+        "timestep": torch.randint(0, 1000, (batch_size,), dtype=torch.long, device=DEVICE),
+    }
+
+    dynamic_shapes = {
+        "hidden_states": {0: BATCH},
+        "text_embeds": {0: BATCH},
+        "pooled_projections": {0: BATCH},
+        "img_ids": {0: BATCH},
+        "timestep": {0: BATCH},
+    }
+
+    print("Exporting the transformer backbone using torch.export...")
+    ep = export(transformer, args=(), kwargs=dummy_inputs, dynamic_shapes=dynamic_shapes)
+    
+    print("Compiling exported program with TensorRT using dynamo backend...")
+    
+    enabled_precisions = {dtype}
+    if gpu_type.upper() == "H100":
+        print("Enabling FP8 precision for TensorRT compilation.")
+        enabled_precisions.add(torch.float8_e4m3fn)
+
+    trt_gm = torch_tensorrt.dynamo.compile(
+        ep,
+        inputs=dummy_inputs,
+        enabled_precisions=enabled_precisions,
+        truncate_double=True,
+        min_block_size=5,
+        use_fp32_acc=True,
+        use_explicit_typing=True,
     )
-    
+
+    print("Saving compiled TensorRT engine...")
     os.makedirs(output_path, exist_ok=True)
+    engine_path = os.path.join(output_path, f"transformer_{gpu_type.lower()}.pt")
     
-    engine_path = os.path.join(output_path, f"transformer_{gpu_type.lower()}.ts")
-    torch.jit.save(trt_transformer, engine_path)
+    # Trace the final compiled graph for a stable, serializable artifact
+    traced_trt_model = torch.jit.trace(trt_gm, example_kw_args=dummy_inputs)
+    torch.jit.save(traced_trt_model, engine_path)
+    
     print(f"TensorRT transformer engine saved to: {engine_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu_type", type=str, required=True, choices=["H100", "L40"], help="The target GPU for compilation.")
+    parser.add_argument("--gpu_type", type=str, required=True, choices=["H100", "L40"])
+    parser.add_argument("--output_dir", type=str, default="./engines", help="Directory to save the compiled engine.")
     args = parser.parse_args()
     
-    output_dir = os.path.join("./engines", args.gpu_type)
+    output_dir = os.path.join(args.output_dir, args.gpu_type)
     compile_model_to_trt(gpu_type=args.gpu_type, output_path=output_dir)
