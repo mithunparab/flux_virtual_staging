@@ -22,7 +22,8 @@ def processing_worker(model: StagingModel, job_queue: Queue, results_store: dict
                 num_outputs=job_data.get("num_outputs", 1), 
                 aspect_ratio=job_data.get("aspect_ratio", "default"),
                 super_resolution=job_data.get("super_resolution", "traditional"),
-                sr_scale=job_data.get("sr_scale", 2)
+                sr_scale=job_data.get("sr_scale", 2),
+                system_prompt=job_data.get("system_prompt") # ADDED
             )
             
             if isinstance(result_images, Exception):

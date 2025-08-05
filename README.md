@@ -27,6 +27,12 @@ This application provides a robust server for virtual home staging. It exposes b
     uv pip install -r requirements.txt
     ```
 
+    ```bash
+    cd $HOME && git clone https://github.com/black-forest-labs/flux
+    cd flux
+    pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+    ```
+
 ## Running the Server
 
 **Step 1: Install `localtunnel`**

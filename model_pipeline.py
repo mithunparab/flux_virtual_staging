@@ -1,119 +1,111 @@
 import torch
-import gc
 import os
-from PIL import Image
-from diffusers import FluxKontextPipeline, DiffusionPipeline, TorchAoConfig
-from diffusers.quantizers import PipelineQuantizationConfig
 import random
+from PIL import Image
 
-from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
+from flux.util import load_ae
+from flux.trt.engine import CLIPEngine, T5Engine, TransformerEngine
+from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
+
+from config import MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 
 class StagingModel:
     def __init__(self):
+        """
+        Initializes the model by loading pre-compiled TensorRT engines.
+        This assumes the engines were built during the Docker image creation process.
+        """
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
-        print(f"Initializing StagingModel for {gpu_type} using pre-compiled TensorRT engine.")
-        self.pipe = self._load_model_from_engine(gpu_type)
-        print("StagingModel initialized and TensorRT pipeline loaded onto GPU.")
-
-    def _load_model_from_engine(self, gpu_type: str):
-        """
-        Loads a pipeline with a pre-compiled TensorRT engine for the transformer.
-        """
-        engine_path = f"./engines/{gpu_type}/transformer_{gpu_type.lower()}.ts"
-        if not os.path.exists(engine_path):
-            raise FileNotFoundError(f"FATAL: Compiled engine not found at {engine_path}. Please run compile_engine.py first.")
-
-        print(f"Loading base pipeline structure...")
-        pipe = FluxKontextPipeline.from_pretrained(
-            MODEL_ID,
-            torch_dtype=torch.bfloat16,
-            ignore_mismatched_sizes=True 
-        )
-
-        print(f"Loading compiled TensorRT engine from: {engine_path}")
-        trt_transformer = torch.jit.load(engine_path)
+        self.device = torch.device("cuda")
+        self.model_name = "flux-dev-kontext"
+        engine_dir = f"./engines/{gpu_type}"
         
-        pipe.transformer = trt_transformer
-        pipe.to("cuda")
+        print(f"Initializing StagingModel for {gpu_type} from pre-compiled engines in: {engine_dir}")
+
+        clip_plan_path = os.path.join(engine_dir, "clip.plan")
+        t5_plan_path = os.path.join(engine_dir, "t5.plan")
+        transformer_plan_path = os.path.join(engine_dir, "transformer.plan")
+
+        for path in [clip_plan_path, t5_plan_path, transformer_plan_path]:
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"FATAL: Required TensorRT engine not found at '{path}'. "
+                    "Please ensure the Docker build process completes successfully."
+                )
         
-        print("Pipeline with TensorRT engine is ready.")
-        return pipe
-    
+        print("Creating a dedicated non-default CUDA stream for TensorRT execution.")
+        self.inference_stream = torch.cuda.Stream()
+        
+        from flux.trt.trt_config import ClipConfig, T5Config, TransformerConfig
+        
+        self.clip = CLIPEngine(ClipConfig.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
+        self.t5 = T5Engine(T5Config.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
+        self.transformer = TransformerEngine(TransformerConfig.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
+
+        self.ae = load_ae(self.model_name, device=self.device)
+
+        print("StagingModel initialized successfully with all TensorRT engines on a dedicated stream.")
+
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
         if aspect_ratio == 'square':
-            print("Applying center crop to create a square image...")
             width, height = image.size
-            
             crop_size = min(width, height)
-            
             left = (width - crop_size) / 2
             top = (height - crop_size) / 2
             right = (width + crop_size) / 2
             bottom = (height + crop_size) / 2
-
-            image = image.crop((left, top, right, bottom))
-            
-            if image.width > MAX_IMAGE_SIZE:
-                 image = image.resize((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.LANCZOS)
-            print(f"Cropped and resized image to square: {image.size}")
-        else:  
-            if max(image.size) > MAX_IMAGE_SIZE:
-                image.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.LANCZOS)
-                print(f"Resized image to {image.size} to fit within {MAX_IMAGE_SIZE}x{MAX_IMAGE_SIZE}")
+            return image.crop((left, top, right, bottom))
         return image
         
-
+    @torch.inference_mode()
     def generate(
-        self,
-        prompt: str,
-        input_image: Image.Image,
-        seed: int,
-        guidance_scale: float,
-        steps: int,
-        negative_prompt: str,
-        aspect_ratio: str,
-        super_resolution: str,
-        sr_scale: int,
-        num_outputs: int = 1
+        self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float,
+        steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str,
+        sr_scale: int, num_outputs: int = 1, system_prompt: str | None = None
     ):
-        full_prompt = f"{SYSTEM_PROMPT}{prompt}"
-        print(f"Using full prompt: {full_prompt}")
-        print(f"Using negative prompt: {negative_prompt}")
+        final_system_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+        full_prompt = f"{final_system_prompt}{prompt}"
         
+        temp_img_path = None
         try:
-            input_image = input_image.convert("RGB")
-            input_image = self._resize_image(input_image, aspect_ratio)
+            temp_img_path = f"/tmp/input_image_{random.randint(1000, 99999)}.png"
+            processed_image = self._resize_image(input_image.convert("RGB"), aspect_ratio)
+            processed_image.save(temp_img_path)
 
-            if seed != -1:
-                seeds = [seed + i for i in range(num_outputs)]
-            else:
+            if seed == -1:
                 seeds = [random.randint(0, MAX_SEED) for _ in range(num_outputs)]
+            else:
+                seeds = [seed + i for i in range(num_outputs)]
             
-            print(f"Generating a batch of {num_outputs} with seeds: {seeds}")
+            print(f"Generating {num_outputs} image(s) with seeds: {seeds}")
 
-            generators = [torch.Generator("cuda").manual_seed(s) for s in seeds]
-
-            with torch.no_grad():
-                batched_images = self.pipe(
-                    image=input_image,
-                    prompt=[full_prompt] * num_outputs,
-                    negative_prompt=[negative_prompt] * num_outputs,
-                    guidance_scale=guidance_scale,
-                    width=input_image.size[0],
-                    height=input_image.size[1],
-                    num_inference_steps=steps,
-                    generator=generators,
-                ).images
+            batched_images = []
+            for current_seed in seeds:
+                # All operations within this loop will now use the dedicated stream.
+                with torch.cuda.stream(self.inference_stream):
+                    inp, height, width = prepare_kontext(
+                        t5=self.t5, clip=self.clip, prompt=full_prompt, ae=self.ae,
+                        img_cond_path=temp_img_path, seed=current_seed, device=self.device, bs=1
+                    )
+                    
+                    inp.pop("img_cond_orig", None)
+                    timesteps = get_schedule(steps, inp["img"].shape[1], shift=True)
+                    latents = denoise(self.transformer, timesteps=timesteps, guidance=guidance_scale, **inp)
+                    latents = unpack(latents.float(), height, width)
+                    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                        image = self.ae.decode(latents)
+                
+                image = (image[0].clamp(-1, 1) + 1) / 2
+                image = (image.permute(1, 2, 0) * 255).byte().cpu().numpy()
+                pil_image = Image.fromarray(image)
+                batched_images.append(pil_image)
 
             final_images = []
             if super_resolution == "traditional" and sr_scale > 1:
-                print(f"Applying traditional super resolution with scale x{sr_scale} to {len(batched_images)} images")
                 for img in batched_images:
                     new_width = img.width * sr_scale
                     new_height = img.height * sr_scale
-                    final_images.append(
-                        img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    )
+                    final_images.append(img.resize((new_width, new_height), Image.Resampling.LANCZOS))
             else:
                 final_images = batched_images
 
@@ -124,3 +116,6 @@ class StagingModel:
             import traceback
             traceback.print_exc()
             return e, []
+        finally:
+            if temp_img_path and os.path.exists(temp_img_path):
+                os.remove(temp_img_path)

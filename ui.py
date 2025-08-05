@@ -3,7 +3,10 @@ import time
 import uuid
 import random
 import asyncio
-
+import io
+import base64
+import asyncio
+from PIL import Image
 from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, API_TIMEOUT, DEFAULT_NEGATIVE_PROMPT, MAX_IMAGE_SIZE, SUPPORTED_FORMATS
 
 job_queue = None

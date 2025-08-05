@@ -1,7 +1,6 @@
 import uuid
 import time
 import io
-import random
 import base64
 import asyncio
 from PIL import Image
@@ -12,7 +11,7 @@ from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse 
 from pydantic import BaseModel, Field
 
-from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, API_TIMEOUT, DEFAULT_NEGATIVE_PROMPT, MAX_IMAGE_SIZE, SUPPORTED_FORMATS
+from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, API_TIMEOUT, DEFAULT_NEGATIVE_PROMPT, MAX_IMAGE_SIZE, SUPPORTED_FORMATS, SYSTEM_PROMPT
 
 job_queue = None
 results_store = None
@@ -23,11 +22,13 @@ OutputExtensionEnum = Enum("OutputExtensionEnum", {k: k for k in SUPPORTED_FORMA
 class Base64StageRequest(BaseModel):
     image_base64: str = Field(..., description="A base64 encoded string of the input image.")
     prompt: str = Field(..., description="A description of the desired staging style.")
+    # ADDED system_prompt
+    system_prompt: str | None = Field(default=None, description="Optional instruction to prepend to the main prompt.")
     negative_prompt: str = Field(default=DEFAULT_NEGATIVE_PROMPT, description="Items to avoid in the generated image.")
     seed: int | None = Field(default=None, description=f"Seed for reproducibility. If null or -1, a random seed is used. Max: {MAX_SEED}")
     guidance_scale: float = Field(default=DEFAULT_GUIDANCE_SCALE, description="Controls how much the prompt guides the image generation.")
     steps: int = Field(default=DEFAULT_STEPS, description="Number of inference steps.")
-    num_outputs: int = Field(default=1, description="Number of images to generate in a batch.") # New
+    num_outputs: int = Field(default=1, description="Number of images to generate in a batch.")
     output_extension: OutputExtensionEnum = Field(default='jpeg', description="Output image format.")
     aspect_ratio: str = Field(default="default", description="Aspect ratio for the output image: 'default' or 'square'.")
     super_resolution: str = Field(default="traditional", description="Super resolution method.")
@@ -63,6 +64,8 @@ async def _process_job_and_get_result(job_data: dict):
 async def stage_image_upload(
     image: UploadFile = File(...),
     prompt: str = Form(...),
+    # ADDED system_prompt
+    system_prompt: str | None = Form(default=None),
     negative_prompt: str = Form(default=DEFAULT_NEGATIVE_PROMPT),
     seed: int = Form(None),
     guidance_scale: float = Form(default=DEFAULT_GUIDANCE_SCALE),
@@ -82,6 +85,7 @@ async def stage_image_upload(
     
     job_data = {
         "image": input_image, "prompt": prompt, "seed": seed,
+        "system_prompt": system_prompt, # ADDED
         "guidance_scale": guidance_scale, "steps": steps, "negative_prompt": negative_prompt,
         "num_outputs": num_outputs,
         "output_extension": output_extension.value,
@@ -104,8 +108,9 @@ async def stage_image_base64(request: Base64StageRequest):
         
     job_data = {
         "image": input_image, "prompt": request.prompt, "seed": seed,
+        "system_prompt": request.system_prompt, # ADDED
         "guidance_scale": request.guidance_scale, "steps": request.steps, "negative_prompt": request.negative_prompt,
-        "num_outputs": request.num_outputs, # New
+        "num_outputs": request.num_outputs,
         "output_extension": request.output_extension.value,
         "aspect_ratio": request.aspect_ratio,
         "super_resolution": request.super_resolution, "sr_scale": request.sr_scale
