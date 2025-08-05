@@ -13,7 +13,6 @@ WORKDIR /app
 
 RUN pip install "flux[tensorrt]@git+https://github.com/black-forest-labs/flux.git" --extra-index-url https://pypi.nvidia.com
 
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -21,7 +20,6 @@ COPY . .
 
 ARG TARGET_GPU=H100
 ENV GPU_TYPE=${TARGET_GPU}
-
 
 RUN --mount=type=secret,id=huggingface \
     mkdir -p ${HF_HOME} && echo -n $(cat /run/secrets/huggingface) > ${HF_HOME}/token && \

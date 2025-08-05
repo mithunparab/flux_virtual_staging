@@ -1,21 +1,21 @@
 import os
-import torch
 from flux.util import check_onnx_access_for_trt
 from flux.trt.trt_manager import TRTManager, ModuleName
-
 
 if __name__ == "__main__":
     print("----------------------------------------------------")
     print("--- Starting One-Time TensorRT Engine Compilation ---")
-    print("This will take several minutes and only runs once during image build.")
-
+    
     gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
     model_name = "flux-dev-kontext"
     engine_dir = f"./engines/{gpu_type}"
 
-    onnx_paths = check_onnx_access_for_trt(model_name, trt_transformer_precision="fp8")
+    transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
+    print(f"Target GPU: {gpu_type}, using Transformer Precision: {transformer_precision}")
 
-    manager = TRTManager(trt_transformer_precision="fp8", trt_t5_precision="bf16")
+    onnx_paths = check_onnx_access_for_trt(model_name, trt_transformer_precision=transformer_precision)
+
+    manager = TRTManager(trt_transformer_precision=transformer_precision, trt_t5_precision="bf16")
 
     manager.load_engines(
         model_name=model_name,
@@ -25,8 +25,8 @@ if __name__ == "__main__":
         trt_image_height=1024,
         trt_image_width=1024,
         trt_static_batch=False,
-        trt_static_shape=False, 
+        trt_static_shape=False,
     )
 
-    print("--- TensorRT Engines Built and Cached Successfully ---")
+    print("--- TensorRT Engines Built and Cached Successfully in Docker Image ---")
     print("----------------------------------------------------")

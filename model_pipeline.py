@@ -3,8 +3,8 @@ import os
 import random
 from PIL import Image
 
-from flux.util import load_ae
-from flux.trt.engine import CLIPEngine, T5Engine, TransformerEngine
+from flux.util import load_ae, check_onnx_access_for_trt, ensure_hf_auth, prompt_for_hf_auth
+from flux.trt.trt_manager import TRTManager, ModuleName
 from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
 
 from config import MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
@@ -12,39 +12,49 @@ from config import MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 class StagingModel:
     def __init__(self):
         """
-        Initializes the model by loading pre-compiled TensorRT engines.
-        This assumes the engines were built during the Docker image creation process.
+        Initializes the model for both local and production environments.
+        - In production (Docker), it loads pre-compiled TensorRT engines.
+        - Locally, it builds and caches the engines on the first run.
         """
-        gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
+        gpu_type = os.environ.get("GPU_TYPE", "L40").upper() 
         self.device = torch.device("cuda")
         self.model_name = "flux-dev-kontext"
-        engine_dir = f"./engines/{gpu_type}"
         
-        print(f"Initializing StagingModel for {gpu_type} from pre-compiled engines in: {engine_dir}")
+        transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
+        print(f"Initializing StagingModel for GPU: {gpu_type}, using Transformer Precision: {transformer_precision}")
 
-        clip_plan_path = os.path.join(engine_dir, "clip.plan")
-        t5_plan_path = os.path.join(engine_dir, "t5.plan")
-        transformer_plan_path = os.path.join(engine_dir, "transformer.plan")
+        if not ensure_hf_auth():
+            print("Hugging Face token not found.")
+            if not prompt_for_hf_auth():
+                raise RuntimeError("Hugging Face authentication is required to download models.")
 
-        for path in [clip_plan_path, t5_plan_path, transformer_plan_path]:
-            if not os.path.exists(path):
-                raise FileNotFoundError(
-                    f"FATAL: Required TensorRT engine not found at '{path}'. "
-                    "Please ensure the Docker build process completes successfully."
-                )
-        
-        print("Creating a dedicated non-default CUDA stream for TensorRT execution.")
+        onnx_paths = check_onnx_access_for_trt(self.model_name, trt_transformer_precision=transformer_precision)
+
+        manager = TRTManager(trt_transformer_precision=transformer_precision, trt_t5_precision="bf16")
+
+        self.engines = manager.load_engines(
+            model_name=self.model_name,
+            module_names={ModuleName.CLIP, ModuleName.T5, ModuleName.TRANSFORMER},
+            engine_dir=f"./engines/{gpu_type}",
+            custom_onnx_paths=onnx_paths,
+            trt_image_height=1024,
+            trt_image_width=1024,
+            trt_static_batch=False,
+            trt_static_shape=False,
+        )
+
+        self.clip = self.engines[ModuleName.CLIP].to(self.device)
+        self.t5 = self.engines[ModuleName.T5].to(self.device)
+        self.transformer = self.engines[ModuleName.TRANSFORMER].to(self.device)
+
         self.inference_stream = torch.cuda.Stream()
-        
-        from flux.trt.trt_config import ClipConfig, T5Config, TransformerConfig
-        
-        self.clip = CLIPEngine(ClipConfig.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
-        self.t5 = T5Engine(T5Config.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
-        self.transformer = TransformerEngine(TransformerConfig.from_args(self.model_name, engine_dir=engine_dir), stream=self.inference_stream).to(self.device)
+        self.clip.stream = self.inference_stream
+        self.t5.stream = self.inference_stream
+        self.transformer.stream = self.inference_stream
 
         self.ae = load_ae(self.model_name, device=self.device)
 
-        print("StagingModel initialized successfully with all TensorRT engines on a dedicated stream.")
+        print("StagingModel initialized successfully with all TensorRT engines.")
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
         if aspect_ratio == 'square':
@@ -81,7 +91,6 @@ class StagingModel:
 
             batched_images = []
             for current_seed in seeds:
-                # All operations within this loop will now use the dedicated stream.
                 with torch.cuda.stream(self.inference_stream):
                     inp, height, width = prepare_kontext(
                         t5=self.t5, clip=self.clip, prompt=full_prompt, ae=self.ae,
