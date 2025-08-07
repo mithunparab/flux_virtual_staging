@@ -3,7 +3,7 @@ import os
 import random
 from PIL import Image
 
-from flux.util import load_ae, check_onnx_access_for_trt, ensure_hf_auth, prompt_for_hf_auth
+from flux.util import load_ae, check_onnx_access_for_trt
 from flux.trt.trt_manager import TRTManager, ModuleName
 from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
 
@@ -16,17 +16,12 @@ class StagingModel:
         - In production (Docker), it loads pre-compiled TensorRT engines.
         - Locally, it builds and caches the engines on the first run.
         """
-        gpu_type = os.environ.get("GPU_TYPE", "L40").upper() 
+        gpu_type = os.environ.get("GPU_TYPE", "H100").upper() 
         self.device = torch.device("cuda")
         self.model_name = "flux-dev-kontext"
         
         transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
         print(f"Initializing StagingModel for GPU: {gpu_type}, using Transformer Precision: {transformer_precision}")
-
-        if not ensure_hf_auth():
-            print("Hugging Face token not found.")
-            if not prompt_for_hf_auth():
-                raise RuntimeError("Hugging Face authentication is required to download models.")
 
         onnx_paths = check_onnx_access_for_trt(self.model_name, trt_transformer_precision=transformer_precision)
 
