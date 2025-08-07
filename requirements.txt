@@ -1,10 +1,8 @@
-# Web Frameworks & UI
 fastapi
 uvicorn[standard]
 python-multipart
 gradio
 
-# ML/Diffusers Core
 diffusers @ git+https://github.com/huggingface/diffusers.git@f36ba9f094cb906d0e580b729777f0f20b01da74
 accelerate
 safetensors
@@ -16,5 +14,5 @@ protobuf
 runpod
 torch-tensorrt
 torchao
-# Performance - Highly recommended for diffusers
 xformers
+numpy<2
