@@ -5,16 +5,20 @@ ENV TZ=Etc/UTC
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/build/cache
 ENV HUGGING_FACE_HUB_CACHE=/build/cache
+ENV PATH="/root/.local/bin:$PATH"
 
-RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa-glx && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa-glx curl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
 RUN git clone https://github.com/black-forest-labs/flux ./flux
-RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+RUN cd flux && uv pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+
+COPY requirements.txt .
+RUN uv pip install -r requirements.txt
 
 COPY build_engines.py .
 COPY config.py .
@@ -34,16 +38,20 @@ ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/cache
 ENV HUGGING_FACE_HUB_CACHE=/app/cache
 ENV HOME=/app
+ENV PATH="/root/.local/bin:$PATH"
 
-RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa-glx && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa-glx curl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
 RUN git clone https://github.com/black-forest-labs/flux ./flux
-RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+RUN cd flux && uv pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+
+COPY requirements.txt .
+RUN uv pip install -r requirements.txt
 
 COPY . .
 
