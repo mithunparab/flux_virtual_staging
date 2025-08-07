@@ -5,12 +5,12 @@ ENV TZ=Etc/UTC
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/build/cache
 ENV HUGGING_FACE_HUB_CACHE=/build/cache
-ENV PATH="/root/.local/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa-glx curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 ADD https://astral.sh/uv/install.sh /uv-installer.sh
 RUN sh /uv-installer.sh && rm /uv-installer.sh
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
