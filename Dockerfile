@@ -15,7 +15,6 @@ RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidi
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-RUN pip install --force-reinstall opencv-python==4.8.0.76
 
 COPY build_engines.py .
 COPY config.py .
@@ -45,7 +44,6 @@ RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidi
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-RUN pip install --force-reinstall opencv-python==4.8.0.76
 
 COPY . .
 
