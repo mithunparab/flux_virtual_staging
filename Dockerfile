@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa
 
 WORKDIR /app
 
-RUN git clone https://github.com/black-forest-labs/flux ./flux
-RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
-
 COPY requirements.txt .
 RUN pip install -r requirements.txt
+
+RUN git clone https://github.com/black-forest-labs/flux ./flux
+RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
 
 COPY build_engines.py .
 COPY config.py .
@@ -39,11 +39,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git libgl1-mesa
 
 WORKDIR /app
 
-RUN git clone https://github.com/black-forest-labs/flux ./flux
-RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
-
 COPY requirements.txt .
 RUN pip install -r requirements.txt
+
+RUN git clone https://github.com/black-forest-labs/flux ./flux
+RUN cd flux && pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
 
 COPY . .
 

@@ -2,17 +2,16 @@ fastapi
 uvicorn[standard]
 python-multipart
 gradio
-
 diffusers @ git+https://github.com/huggingface/diffusers.git@f36ba9f094cb906d0e580b729777f0f20b01da74
 accelerate
 safetensors
 sentencepiece
 transformers
 Pillow
-numpy
 protobuf
 runpod
 torch-tensorrt
 torchao
 xformers
+opencv-python==4.8.0.76
 numpy<2
