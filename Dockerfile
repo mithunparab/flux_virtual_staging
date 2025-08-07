@@ -20,8 +20,6 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-COPY ./engines /app/engines
-
 ARG TARGET_GPU=H100
 ENV GPU_TYPE=${TARGET_GPU}
 
