@@ -2,53 +2,52 @@ import torch
 import os
 import random
 from PIL import Image
+from pathlib import Path
+import traceback
 
-from flux.util import load_ae, check_onnx_access_for_trt
-from flux.trt.trt_manager import TRTManager, ModuleName
+from flux.util import load_ae
 from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
+from flux.trt.engine import CLIPEngine, T5Engine, TransformerEngine, SharedMemory
+from flux.trt.trt_config import ClipConfig, T5Config, TransformerConfig
 
 from config import MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
 
 class StagingModel:
     def __init__(self):
-        """
-        Initializes the model for both local and production environments.
-        - In production (Docker), it loads pre-compiled TensorRT engines.
-        - Locally, it builds and caches the engines on the first run.
-        """
-        gpu_type = os.environ.get("GPU_TYPE", "H100").upper() 
+        gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
-        self.model_name = "flux-dev-kontext"
-        
+        self.model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+        engine_dir = Path(f"./engines/{gpu_type}")
         transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
-        print(f"Initializing StagingModel for GPU: {gpu_type}, using Transformer Precision: {transformer_precision}")
+        
+        print(f"Initializing StagingModel for GPU: {gpu_type}")
+        print(f"Loading pre-compiled TensorRT engines from: {engine_dir}")
 
-        onnx_paths = check_onnx_access_for_trt(self.model_name, trt_transformer_precision=transformer_precision)
+        shared_args = {
+            "engine_dir": str(engine_dir),
+            "trt_verbose": False,
+            "trt_static_batch": False,
+            "trt_static_shape": False,
+        }
+        
+        clip_config = ClipConfig.from_args(self.model_name, precision="bf16", **shared_args)
+        t5_config = T5Config.from_args(self.model_name, precision="bf16", **shared_args)
+        transformer_config = TransformerConfig.from_args(self.model_name, precision=transformer_precision, **shared_args)
 
-        manager = TRTManager(trt_transformer_precision=transformer_precision, trt_t5_precision="bf16")
-
-        self.engines = manager.load_engines(
-            model_name=self.model_name,
-            module_names={ModuleName.CLIP, ModuleName.T5, ModuleName.TRANSFORMER},
-            engine_dir=f"./engines/{gpu_type}",
-            custom_onnx_paths=onnx_paths,
-            trt_image_height=1024,
-            trt_image_width=1024,
-            trt_static_batch=False,
-            trt_static_shape=False,
-        )
-
-        self.clip = self.engines[ModuleName.CLIP].to(self.device)
-        self.t5 = self.engines[ModuleName.T5].to(self.device)
-        self.transformer = self.engines[ModuleName.TRANSFORMER].to(self.device)
+        if not all(Path(config.engine_path).exists() for config in [clip_config, t5_config, transformer_config]):
+            raise FileNotFoundError(
+                f"FATAL: Engines not found in {engine_dir}. "
+                "Ensure engines were built locally and copied into the Docker image."
+            )
 
         self.inference_stream = torch.cuda.Stream()
-        self.clip.stream = self.inference_stream
-        self.t5.stream = self.inference_stream
-        self.transformer.stream = self.inference_stream
+        self.context_memory = SharedMemory(1024 * 1024 * 1024 * 4)
+
+        self.clip = CLIPEngine(clip_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
+        self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
+        self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
 
         self.ae = load_ae(self.model_name, device=self.device)
-
         print("StagingModel initialized successfully with all TensorRT engines.")
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
@@ -82,8 +81,6 @@ class StagingModel:
             else:
                 seeds = [seed + i for i in range(num_outputs)]
             
-            print(f"Generating {num_outputs} image(s) with seeds: {seeds}")
-
             batched_images = []
             for current_seed in seeds:
                 with torch.cuda.stream(self.inference_stream):
@@ -92,9 +89,11 @@ class StagingModel:
                         img_cond_path=temp_img_path, seed=current_seed, device=self.device, bs=1
                     )
                     
-                    inp.pop("img_cond_orig", None)
                     timesteps = get_schedule(steps, inp["img"].shape[1], shift=True)
+                    
+                    inp.pop("img_cond_orig", None)
                     latents = denoise(self.transformer, timesteps=timesteps, guidance=guidance_scale, **inp)
+                    
                     latents = unpack(latents.float(), height, width)
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                         image = self.ae.decode(latents)
@@ -116,10 +115,8 @@ class StagingModel:
             return final_images, seeds
 
         except Exception as e:
-            print(f"An error occurred during inference: {e}")
-            import traceback
             traceback.print_exc()
             return e, []
         finally:
-            if temp_img_path and os.path.exists(temp_img_path):
+             if temp_img_path and os.path.exists(temp_img_path):
                 os.remove(temp_img_path)
