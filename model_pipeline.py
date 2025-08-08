@@ -17,6 +17,7 @@ class StagingModel:
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
         self.model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+        config_model_name = "flux-dev-kontext"
         engine_dir = Path(f"./engines/{gpu_type}")
         transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
         
@@ -30,9 +31,9 @@ class StagingModel:
             "trt_static_shape": False,
         }
         
-        clip_config = ClipConfig.from_args(self.model_name, precision="bf16", **shared_args)
-        t5_config = T5Config.from_args(self.model_name, precision="bf16", **shared_args)
-        transformer_config = TransformerConfig.from_args(self.model_name, precision=transformer_precision, **shared_args)
+        clip_config = ClipConfig.from_args(config_model_name, precision="bf16", **shared_args)
+        t5_config = T5Config.from_args(config_model_name, precision="bf16", **shared_args)
+        transformer_config = TransformerConfig.from_args(config_model_name, precision=transformer_precision, **shared_args)
 
         if not all(Path(config.engine_path).exists() for config in [clip_config, t5_config, transformer_config]):
             raise FileNotFoundError(
