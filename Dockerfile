@@ -29,4 +29,9 @@ COPY . .
 ARG TARGET_GPU=H100
 ENV GPU_TYPE=${TARGET_GPU}
 
+RUN python build_engines.py && \
+    echo "Engine build complete. Cleaning up ONNX files..." && \
+    rm -rf /app/cache/models--black-forest-labs--FLUX.1-Kontext-dev-onnx && \
+    echo "Cleanup finished."
+
 CMD ["python", "-u", "rp_handler.py"]
