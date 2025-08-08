@@ -32,7 +32,7 @@ ffmpy==0.6.1
 filelock==3.18.0
 fire==0.7.0
 flatbuffers==25.2.10
--e file:///root/flux
+flux @ git+https://github.com/black-forest-labs/flux.git
 frozenlist==1.7.0
 fsspec==2025.7.0
 gradio==5.41.1
