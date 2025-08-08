@@ -11,8 +11,13 @@ ENV PATH=/root/.local/bin:/usr/local/bin:$PATH
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git libgl1-mesa-glx curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+    git \
+    libgl1 \
+    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
 
 RUN python3 -m pip install --upgrade pip setuptools wheel \
     && python3 -m pip install --no-cache-dir uv
