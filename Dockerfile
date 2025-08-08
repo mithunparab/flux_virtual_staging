@@ -21,7 +21,7 @@ COPY requirements.lock .
 
 RUN which uv || (echo "uv not found on PATH" && exit 1) \
     && uv --version \
-    && uv pip sync requirements.lock --extra-index-url https://pypi.nvidia.com
+    && uv pip sync --system requirements.lock --extra-index-url https://pypi.nvidia.com
 
 COPY . .
 
