@@ -16,13 +16,25 @@ class StagingModel:
     def __init__(self):
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
-        self.model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+        
+        network_volume_path = os.environ.get("NETWORK_VOLUME_PATH")
+        if not network_volume_path:
+            raise ValueError("FATAL: NETWORK_VOLUME_PATH is not set in the serverless environment. "
+                             "The worker cannot find the pre-compiled engines.")
+
+        self.local_model_path = Path("./models/flux-dev-kontext")
+        if not self.local_model_path.exists():
+            raise FileNotFoundError(f"FATAL: Local model path '{self.local_model_path}' not found inside the container.")
+
+        engine_dir = Path(network_volume_path) / gpu_type
         config_model_name = "flux-dev-kontext"
-        engine_dir = Path(f"./engines/{gpu_type}")
         transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
         
         print(f"Initializing StagingModel for GPU: {gpu_type}")
-        print(f"Loading pre-compiled TensorRT engines from: {engine_dir}")
+        print(f"Attempting to load pre-compiled TensorRT engines from network volume: {engine_dir}")
+
+        if not engine_dir.exists():
+            raise FileNotFoundError(f"FATAL: Engine directory '{engine_dir}' not found on the network volume.")
 
         shared_args = {
             "engine_dir": str(engine_dir),
@@ -37,8 +49,8 @@ class StagingModel:
 
         if not all(Path(config.engine_path).exists() for config in [clip_config, t5_config, transformer_config]):
             raise FileNotFoundError(
-                f"FATAL: Engines not found in {engine_dir}. "
-                "Ensure engines were built locally and copied into the Docker image."
+                f"FATAL: One or more engine files (.plan) not found in {engine_dir}. "
+                "Ensure engines were built correctly and the network volume is mounted."
             )
 
         self.inference_stream = torch.cuda.Stream()
@@ -48,8 +60,8 @@ class StagingModel:
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
 
-        self.ae = load_ae(self.model_name, device=self.device)
-        print("StagingModel initialized successfully with all TensorRT engines.")
+        self.ae = load_ae(str(self.local_model_path), device=self.device)
+        print("StagingModel initialized successfully with all TensorRT engines from network volume.")
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
         if aspect_ratio == 'square':

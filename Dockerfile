@@ -3,8 +3,6 @@ FROM nvcr.io/nvidia/pytorch:24.11-py3
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/app/cache
-ENV HUGGING_FACE_HUB_CACHE=/app/cache
 ENV HOME=/app
 ENV PATH=/opt/venv/bin:/usr/local/bin:$PATH
 
@@ -21,17 +19,11 @@ RUN python3 -m venv /opt/venv \
     && pip install uv
 
 COPY requirements.lock .
-
 RUN uv pip sync requirements.lock --extra-index-url https://pypi.nvidia.com
 
 COPY . .
 
-ARG TARGET_GPU=H100
-ENV GPU_TYPE=${TARGET_GPU}
+RUN python download_base_model.py
 
-RUN python build_engines.py && \
-    echo "Engine build complete. Cleaning up ONNX files..." && \
-    rm -rf /app/cache/models--black-forest-labs--FLUX.1-Kontext-dev-onnx && \
-    echo "Cleanup finished."
 
 CMD ["python", "-u", "rp_handler.py"]
