@@ -1,4 +1,4 @@
-# Virtual Staging Server with FLUX.1
+# Virtual Staging
 
 This application provides a robust server for virtual home staging. It exposes both a REST API and a web-based UI (Gradio), built on a FastAPI backend. It's designed for a single-GPU environment, using a queuing system to handle concurrent requests efficiently.
 
@@ -23,14 +23,14 @@ This application provides a robust server for virtual home staging. It exposes b
 3. **Install requirements:**
 
     ```bash
-    pip install uv
-    uv pip install -r requirements.lock
-    ```
-
-    ```bash
     cd $HOME && git clone https://github.com/black-forest-labs/flux
     cd flux
     pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
+    ```
+
+    ```bash
+    pip install uv
+    uv pip install -r requirements.lock
     ```
 
 ## Running the Server

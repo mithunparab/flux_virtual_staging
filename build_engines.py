@@ -5,7 +5,7 @@ from huggingface_hub import snapshot_download, HfApi
 from flux.trt.trt_manager import TRTManager, ModuleName
 
 def build():
-    output_path = os.environ.get("NETWORK_VOLUME_PATH")
+    output_path = os.environ.get("NETWORK_VOLUME_PATH", '/workspace')
     if not output_path:
         raise ValueError("FATAL: NETWORK_VOLUME_PATH environment variable is not set.")
 
