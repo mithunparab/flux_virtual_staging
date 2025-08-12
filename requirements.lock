@@ -114,7 +114,6 @@ requests==2.32.4
 rich==14.1.0
 rich-toolkit==0.14.9
 rignore==0.6.4
-ruff==0.12.8
 runpod==1.7.13
 s3transfer==0.13.1
 safehttpx==0.1.6
