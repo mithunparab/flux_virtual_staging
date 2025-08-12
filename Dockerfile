@@ -25,7 +25,7 @@ RUN git clone https://github.com/black-forest-labs/flux && \
     pip install -e ".[tensorrt]" --extra-index-url https://pypi.nvidia.com
 
 COPY requirements.lock .
-RUN uv pip sync requirements.lock --extra-index-url https://pypi.nvidia.com
+RUN uv pip install requirements.lock
 
 COPY . .
 
