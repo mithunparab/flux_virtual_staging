@@ -29,6 +29,4 @@ RUN uv pip install -r requirements.lock --extra-index-url https://pypi.nvidia.co
 
 COPY . .
 
-RUN python download_base_model.py
-
 CMD ["python", "-u", "rp_handler.py"]
