@@ -1,24 +1,55 @@
 import os
 import base64
 import io
-import random
 from PIL import Image
 import runpod
-
-os.environ["HOME"] = "/app"
+from huggingface_hub import snapshot_download
 from pathlib import Path
-Path.home = lambda: Path("/app")
 
+model = None
 
-from model_pipeline import StagingModel
-from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
+def initialize_model():
+    """
+    Downloads the model and initializes the StagingModel class.
+    This function is called only once when the pod starts.
+    """
+    global model
+    print("Cold start: Initializing StagingModel...")
 
+    hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
+    if not hf_token:
+        raise ValueError("FATAL: HUGGING_FACE_HUB_TOKEN secret not found in runtime environment.")
 
-print("Initializing StagingModel...")
-model = StagingModel()
-print("StagingModel initialized successfully.")
+    model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+    local_path = Path("./models/flux-dev-kontext")
+    
+    print(f"Downloading base model '{model_name}' to {local_path}...")
+    snapshot_download(
+        repo_id=model_name,
+        local_dir=local_path,
+        token=hf_token, 
+        local_dir_use_symlinks=False,
+        ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
+    )
+    print("Base model download complete.")
+    from model_pipeline import StagingModel
+    from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
+
+    os.environ["HOME"] = "/app"
+    Path.home = lambda: Path("/app")
+    
+    model = StagingModel()
+    print("StagingModel initialized successfully.")
 
 def handler(job):
+    """
+    The main handler function for RunPod serverless.
+    """
+    global model
+
+    if model is None:
+        initialize_model()
+
     job_input = job.get('input', {})
 
     image_base64 = job_input.get('image_base64')
@@ -34,6 +65,8 @@ def handler(job):
         input_image = Image.open(io.BytesIO(image_bytes))
     except Exception as e:
         return {"error": f"Invalid base64 string or image format: {e}"}
+
+    from config import DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
 
     params = {
         "prompt": prompt,
