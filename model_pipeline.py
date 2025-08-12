@@ -1,5 +1,5 @@
-import torch
 import os
+import torch
 import random
 from PIL import Image
 from pathlib import Path
@@ -8,9 +8,13 @@ import traceback
 from flux.util import load_ae
 from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
 from flux.trt.engine import CLIPEngine, T5Engine, TransformerEngine, SharedMemory
-from flux.trt.trt_config import ClipConfig, T5Config, TransformerConfig
-
 from config import MAX_IMAGE_SIZE, SYSTEM_PROMPT, MAX_SEED
+
+class OfflineEngineConfig:
+    def __init__(self, engine_path: str, text_maxlen: int | None = None, model_name: str | None = None):
+        self.engine_path = engine_path
+        self.text_maxlen = text_maxlen
+        self.model_name = model_name
 
 class StagingModel:
     def __init__(self):
@@ -19,49 +23,51 @@ class StagingModel:
         
         network_volume_path = os.environ.get("NETWORK_VOLUME_PATH")
         if not network_volume_path:
-            raise ValueError("FATAL: NETWORK_VOLUME_PATH is not set in the serverless environment. "
-                             "The worker cannot find the pre-compiled engines.")
+            raise ValueError("FATAL: NETWORK_VOLUME_PATH environment variable is not set.")
 
-        self.local_model_path = Path("./models/flux-dev-kontext")
-        if not self.local_model_path.exists():
-            raise FileNotFoundError(f"FATAL: Local model path '{self.local_model_path}' not found inside the container.")
+        autoencoder_path = Path("./models/flux-dev-kontext")
+        if not autoencoder_path.exists():
+            raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found inside the container.")
 
-        engine_dir = Path(network_volume_path) / gpu_type
-        config_model_name = "flux-dev-kontext"
-        transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
+        engine_dir = Path(network_volume_path) / gpu_type / "flux-dev-kontext"
         
         print(f"Initializing StagingModel for GPU: {gpu_type}")
-        print(f"Attempting to load pre-compiled TensorRT engines from network volume: {engine_dir}")
+        print(f"Loading engines directly from: {engine_dir}")
 
         if not engine_dir.exists():
             raise FileNotFoundError(f"FATAL: Engine directory '{engine_dir}' not found on the network volume.")
 
-        shared_args = {
-            "engine_dir": str(engine_dir),
-            "trt_verbose": False,
-            "trt_static_batch": False,
-            "trt_static_shape": False,
-        }
+        transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
         
-        clip_config = ClipConfig.from_args(config_model_name, precision="bf16", **shared_args)
-        t5_config = T5Config.from_args(config_model_name, precision="bf16", **shared_args)
-        transformer_config = TransformerConfig.from_args(config_model_name, precision=transformer_precision, **shared_args)
+        try:
+            clip_engine_files = list(engine_dir.glob("clip_bf16*.plan"))
+            if not clip_engine_files: raise FileNotFoundError("CLIP")
+            clip_engine_path = clip_engine_files[0]
 
-        if not all(Path(config.engine_path).exists() for config in [clip_config, t5_config, transformer_config]):
-            raise FileNotFoundError(
-                f"FATAL: One or more engine files (.plan) not found in {engine_dir}. "
-                "Ensure engines were built correctly and the network volume is mounted."
-            )
-
+            t5_engine_files = list(engine_dir.glob("t5_bf16*.plan"))
+            if not t5_engine_files: raise FileNotFoundError("T5")
+            t5_engine_path = t5_engine_files[0]
+            
+            transformer_engine_files = list(engine_dir.glob(f"transformer_{transformer_precision}*.plan"))
+            if not transformer_engine_files: raise FileNotFoundError(f"Transformer ({transformer_precision})")
+            transformer_engine_path = transformer_engine_files[0]
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"FATAL: Could not find a .plan file for {e} in '{engine_dir}'") from e
+        
+        clip_config = OfflineEngineConfig(engine_path=str(clip_engine_path), text_maxlen=77)
+        t5_config = OfflineEngineConfig(engine_path=str(t5_engine_path), text_maxlen=512)
+        transformer_config = OfflineEngineConfig(engine_path=str(transformer_engine_path), model_name="flux-dev-kontext")
+        
         self.inference_stream = torch.cuda.Stream()
         self.context_memory = SharedMemory(1024 * 1024 * 1024 * 4)
 
         self.clip = CLIPEngine(clip_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
-
-        self.ae = load_ae(str(self.local_model_path), device=self.device)
-        print("StagingModel initialized successfully with all TensorRT engines from network volume.")
+        
+        self.ae = load_ae("flux-dev-kontext", device=self.device)
+        
+        print("StagingModel initialized successfully using only pre-compiled engines and local files.")
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
         if aspect_ratio == 'square':

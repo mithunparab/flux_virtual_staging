@@ -67,20 +67,19 @@ def build():
 
         onnx_paths_str = ",".join([f"{key}:{value}" for key, value in onnx_paths_dict.items()])
 
-        manager = TRTManager(trt_transformer_precision=transformer_precision, trt_t5_precision=t5_precision)
+        manager = TRTManager(
+            trt_transformer_precision=transformer_precision,
+            trt_t5_precision=t5_precision,
+        )
         
         manager.load_engines(
             model_name=library_model_name,
             module_names={ModuleName.CLIP, ModuleName.T5, ModuleName.TRANSFORMER},
             engine_dir=str(engine_dir),
             custom_onnx_paths=onnx_paths_str,
-            trt_min_text_len=512,
-            trt_opt_text_len=2048,
-            trt_max_text_len=8192,
             trt_image_height=1024,
             trt_image_width=1024,
-            trt_static_batch=False,
-            trt_static_shape=False,
+            
         )
         print(f"[SUCCESS] TensorRT engines built and saved to {engine_dir}")
 
