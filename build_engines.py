@@ -6,8 +6,8 @@ from flux.trt.trt_manager import TRTManager, ModuleName
 
 if __name__ == "__main__":
     print("---------------------------------------------------------")
-    print("--- Self-Contained TensorRT Engine Compilation Script ---")
-    print("--- This script requires NO internet during build.    ---")
+    print("--- Optimized TensorRT Engine Compilation Script      ---")
+    print("--- Downloads ONLY necessary ONNX & config files.     ---")
     
     output_path = os.environ.get("NETWORK_VOLUME_PATH")
     if not output_path:
@@ -19,24 +19,27 @@ if __name__ == "__main__":
     main_model_id = "black-forest-labs/FLUX.1-Kontext-dev"
     onnx_model_id = "black-forest-labs/FLUX.1-Kontext-dev-onnx"
     
-    print(f"\n[PHASE 1/4] Downloading all required model assets to '{BUILD_CACHE_DIR}'...")
+    print(f"\n[PHASE 1/4] Downloading required assets to '{BUILD_CACHE_DIR}'...")
     
-    local_main_model_path = BUILD_CACHE_DIR / "main_model"
+    local_main_model_configs_path = BUILD_CACHE_DIR / "main_model_configs"
     local_onnx_model_path = BUILD_CACHE_DIR / "onnx_model"
 
     try:
+        print(f"Downloading model configurations from '{main_model_id}'...")
         snapshot_download(
             repo_id=main_model_id,
-            local_dir=local_main_model_path,
-            local_dir_use_symlinks=False
+            local_dir=local_main_model_configs_path,
+            local_dir_use_symlinks=False,
+            allow_patterns=["*.json", "*.txt"] 
         )
 
+        print(f"Downloading ONNX models from '{onnx_model_id}'...")
         snapshot_download(
             repo_id=onnx_model_id,
             local_dir=local_onnx_model_path,
             local_dir_use_symlinks=False
         )
-        print("[SUCCESS] All assets downloaded.")
+        print("[SUCCESS] All required assets downloaded efficiently.")
 
         print("\n[PHASE 2/4] Building TensorRT engines from local assets...")
         engine_dir = Path(output_path) / gpu_type
@@ -58,9 +61,9 @@ if __name__ == "__main__":
                 raise FileNotFoundError(f"ONNX file for {name.name} not found at {path}")
 
         manager = TRTManager(trt_transformer_precision=transformer_precision, trt_t5_precision=t5_precision)
-
+        
         manager.load_engines(
-            model_name=str(local_main_model_path), 
+            model_name=str(local_main_model_configs_path),
             module_names={ModuleName.CLIP, ModuleName.T5, ModuleName.TRANSFORMER},
             engine_dir=str(engine_dir),
             custom_onnx_paths=onnx_paths,
