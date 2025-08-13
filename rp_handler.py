@@ -9,10 +9,6 @@ from pathlib import Path
 model = None
 
 def initialize_model():
-    """
-    Downloads the model and initializes the StagingModel class.
-    This function is called only once when the pod starts.
-    """
     global model
     print("Cold start: Initializing StagingModel...")
 
@@ -27,14 +23,13 @@ def initialize_model():
     snapshot_download(
         repo_id=model_name,
         local_dir=local_path,
-        token=hf_token, 
+        token=hf_token,
         local_dir_use_symlinks=False,
         ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
     )
     print("Base model download complete.")
-    from model_pipeline import StagingModel
-    from config import MAX_SEED, DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
 
+    from model_pipeline import StagingModel
     os.environ["HOME"] = "/app"
     Path.home = lambda: Path("/app")
     
@@ -42,9 +37,6 @@ def initialize_model():
     print("StagingModel initialized successfully.")
 
 def handler(job):
-    """
-    The main handler function for RunPod serverless.
-    """
     global model
 
     if model is None:
@@ -78,7 +70,7 @@ def handler(job):
         "aspect_ratio": job_input.get('aspect_ratio', "default"),
         "super_resolution": job_input.get('super_resolution', "traditional"),
         "sr_scale": int(job_input.get('sr_scale', 2)),
-        "num_outputs": int(job_input.get('num_outputs', 1)) 
+        "num_outputs": int(job_input.get('num_outputs', 1))
     }
 
     print(f"Starting batch generation of {params['num_outputs']} with base seed: {params['seed']}")

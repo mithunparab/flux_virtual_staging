@@ -21,13 +21,13 @@ class StagingModel:
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
         
-        network_volume_path = os.environ.get("NETWORK_VOLUME_PATH", '/workspace')
+        network_volume_path = os.environ.get("NETWORK_VOLUME_PATH")
         if not network_volume_path:
             raise ValueError("FATAL: NETWORK_VOLUME_PATH environment variable is not set.")
 
         autoencoder_path = Path("./models/flux-dev-kontext")
         if not autoencoder_path.exists():
-            raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found inside the container.")
+            raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found. It should have been downloaded on cold start.")
 
         engine_dir = Path(network_volume_path) / gpu_type / "flux-dev-kontext"
         
@@ -65,7 +65,7 @@ class StagingModel:
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         
-        self.ae = load_ae("flux-dev-kontext", device=self.device)
+        self.ae = load_ae(autoencoder_path, device=self.device)
         
         print("StagingModel initialized successfully using only pre-compiled engines and local files.")
 
