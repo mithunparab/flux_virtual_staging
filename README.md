@@ -77,7 +77,7 @@ your url is: https://some-random-adjective-and-noun.loca.lt
 
 ## How to Use the API
 
-The API has two main endpoints. Use the base URL provided by your server or tunneling service (e.g., `https://your-tunnel.trycloudflare.com`).
+The API has two main endpoints. Use the base URL provided by your server or tunneling service (e.g., `https://some-random-adjective-and-noun.loca.lt`).
 
 ### `POST /stage_upload`
 
@@ -90,7 +90,7 @@ curl -X POST \
   -F "image=@/path/to/empty_room.jpg" \
   -F "prompt=A chic mid-century modern living room with a green velvet sofa" \
   -F "negative_prompt=ugly, blurry, bad lighting" \
-  https://your-tunnel.trycloudflare.com/stage_upload \
+  https://some-random-adjective-and-noun.loca.lt/stage_upload \
   -o staged_room.png
 ```
 
@@ -115,7 +115,7 @@ curl -X POST \
     "negative_prompt": "blurry, low quality, watermark",
     "seed": 123456
   }' \
-  https://your-tunnel.trycloudflare.com/stage_base64 \
+  https://some-random-adjective-and-noun.loca.lt/stage_base64 \
   -o staged_result_from_base64.png
 ```
 
