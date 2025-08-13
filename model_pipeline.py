@@ -22,7 +22,7 @@ class StagingModel:
         self.device = torch.device("cuda")
 
         base_volume_path = os.environ.get("NETWORK_VOLUME_PATH", "/runpod-volume")
-        
+
         autoencoder_path = Path("./models/flux-dev-kontext")
         if not autoencoder_path.exists():
             raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found. It should have been downloaded on cold start.")
@@ -63,7 +63,7 @@ class StagingModel:
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         
-        self.ae = load_ae(str(autoencoder_path), device=self.device)
+        self.ae = load_ae("flux-dev-kontext", device=self.device)
         
         print("StagingModel initialized successfully using only pre-compiled engines and local files.")
 
