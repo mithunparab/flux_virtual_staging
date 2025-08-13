@@ -21,7 +21,7 @@ class StagingModel:
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
         
-        network_volume_path = os.environ.get("NETWORK_VOLUME_PATH")
+        network_volume_path = os.environ.get("NETWORK_VOLUME_PATH", '/workspace')
         if not network_volume_path:
             raise ValueError("FATAL: NETWORK_VOLUME_PATH environment variable is not set.")
 
