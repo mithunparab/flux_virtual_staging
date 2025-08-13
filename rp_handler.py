@@ -8,10 +8,37 @@ from pathlib import Path
 
 model = None
 
+# rp_handler.py
+
+import os
+import base64
+import io
+import shutil  # <-- Import shutil
+from PIL import Image
+import runpod
+from huggingface_hub import snapshot_download
+from pathlib import Path
+
+model = None
+
 def initialize_model():
     global model
     print("Cold start: Initializing StagingModel...")
 
+    source_engine_dir = Path("/runpod-volume/engines")
+    local_engine_dir = Path("/app/engines")
+
+    if source_engine_dir.exists():
+        if not local_engine_dir.exists():
+            print(f"Copying engines from {source_engine_dir} to local storage {local_engine_dir} for performance...")
+            shutil.copytree(source_engine_dir, local_engine_dir)
+            print("Engine copy complete.")
+        else:
+            print("Local engine directory already exists. Skipping copy.")
+        os.environ["NETWORK_VOLUME_PATH"] = "/app"
+    else:
+        print(f"WARNING: Source engine directory {source_engine_dir} not found.")
+    
     hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
     if not hf_token:
         raise ValueError("FATAL: HUGGING_FACE_HUB_TOKEN secret not found in runtime environment.")
@@ -35,6 +62,7 @@ def initialize_model():
     
     model = StagingModel()
     print("StagingModel initialized successfully.")
+
 
 def handler(job):
     global model
