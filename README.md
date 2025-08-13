@@ -53,7 +53,7 @@ sudo npm install -g localtunnel
 In one SSH terminal, start your server as usual:
 
 ```bash
-python main.py
+uvicorn main:app --host 0.0.0 --port 8000 --reload
 ```
 
 Your app is now running on `localhost:8000`.
