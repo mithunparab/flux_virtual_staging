@@ -29,8 +29,4 @@ RUN uv pip install -r requirements.lock --extra-index-url https://pypi.nvidia.co
 
 COPY . .
 
-ARG HUGGING_FACE_HUB_TOKEN
-ENV HUGGINGFACE_TOKEN=$HUGGING_FACE_HUB_TOKEN
-RUN python -u download_base_model.py
-
 CMD ["python", "-u", "rp_handler.py"]
