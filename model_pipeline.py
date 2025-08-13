@@ -21,7 +21,7 @@ class StagingModel:
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
 
-        base_volume_path = os.environ.get("NETWORK_VOLUME_PATH", "/workspace")
+        base_volume_path = os.environ.get("NETWORK_VOLUME_PATH", "/runpod-volume")
         
         autoencoder_path = Path("./models/flux-dev-kontext")
         if not autoencoder_path.exists():
