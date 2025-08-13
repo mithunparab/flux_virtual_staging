@@ -1,7 +1,7 @@
 import torch
 import gc
 from PIL import Image
-from diffusers import FluxKontextPipeline, FluxTransformer2DModel, GGUFQuantizationConfig
+from diffusers import FluxKontextPipeline
 from contextlib import contextmanager
 
 from config import MODEL_ID, MAX_IMAGE_SIZE, SYSTEM_PROMPT
