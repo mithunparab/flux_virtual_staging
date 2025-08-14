@@ -1,7 +1,6 @@
 import os
 import base64
 import io
-import subprocess
 import time
 from PIL import Image
 import runpod
@@ -12,40 +11,20 @@ import traceback
 
 model = None
 
-def initialize():
+def _initialize():
     global model
+    start_time = time.time()
     try:
-        start_time = time.time()
-        source_engine_dir = Path("/runpod-volume/engines")
-        local_engine_dir = Path("/app/engines")
-        if source_engine_dir.exists() and source_engine_dir.is_dir():
-            if not local_engine_dir.exists():
-                local_engine_dir.mkdir(parents=True, exist_ok=True)
-                rsync_command = ['rsync', '-ah', '--progress', str(source_engine_dir) + '/', str(local_engine_dir) + '/']
-                result = subprocess.run(rsync_command, check=False, capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise RuntimeError(f"rsync for engines failed with code {result.returncode}: {result.stderr}")
-            os.environ["NETWORK_VOLUME_PATH"] = "/app"
-        else:
-            os.environ["NETWORK_VOLUME_PATH"] = "/runpod-volume"
-        source_model_dir = Path("/runpod-volume/models/flux-dev-kontext")
+        os.environ["NETWORK_VOLUME_PATH"] = "/app"
         local_model_dir = Path("./models/flux-dev-kontext")
-        if source_model_dir.exists() and source_model_dir.is_dir():
-            if not local_model_dir.exists():
-                local_model_dir.mkdir(parents=True, exist_ok=True)
-                rsync_command = ['rsync', '-ah', '--progress', str(source_model_dir) + '/', str(local_model_dir) + '/']
-                result = subprocess.run(rsync_command, check=False, capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise RuntimeError(f"rsync for base model failed with code {result.returncode}: {result.stderr}")
-        else:
-            if not local_model_dir.exists() or not any(local_model_dir.iterdir()):
-                model_name = "black-forest-labs/FLUX.1-Kontext-dev"
-                snapshot_download(
-                    repo_id=model_name,
-                    local_dir=local_model_dir,
-                    local_dir_use_symlinks=False,
-                    ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
-                )
+        if not local_model_dir.exists() or not any(local_model_dir.iterdir()):
+            model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+            snapshot_download(
+                repo_id=model_name,
+                local_dir=local_model_dir,
+                local_dir_use_symlinks=False,
+                ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
+            )
         from model_pipeline import StagingModel
         os.environ["HOME"] = "/app"
         Path.home = lambda: Path("/app")
@@ -59,29 +38,28 @@ def initialize():
         )
         torch.cuda.synchronize()
         end_time = time.time()
-        return
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        return
+        model = None
 
 def handler(job: dict) -> dict:
     global model
     if model is None:
-        return {"error": "Model is not initialized. The initializer failed. Check the pod logs for a traceback."}
-    job_input = job.get('input', {})
-    image_base64 = job_input.get('image_base64')
-    if not image_base64:
-        return {"error": "Missing 'image_base64' in input."}
-    prompt = job_input.get('prompt')
-    if not prompt:
-        return {"error": "Missing 'prompt' in input."}
+        _initialize()
+        if model is None:
+            return {"error": "Model failed to initialize. Please check the pod logs for errors."}
+    job_input: dict = job.get('input', {})
+    image_base64: str = job.get('input', {}).get('image_base64')
+    if not image_base64: return {"error": "Missing 'image_base64' in input."}
+    prompt: str = job.get('input', {}).get('prompt')
+    if not prompt: return {"error": "Missing 'prompt' in input."}
     try:
-        image_bytes = base64.b64decode(image_base64)
-        input_image = Image.open(io.BytesIO(image_bytes))
+        image_bytes: bytes = base64.b64decode(image_base64)
+        input_image: Image.Image = Image.open(io.BytesIO(image_bytes))
     except Exception as e:
         return {"error": f"Invalid base64 string or image format: {e}"}
     from config import DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
-    params = {
+    params: dict = {
         "prompt": prompt,
         "input_image": input_image,
         "negative_prompt": job_input.get('negative_prompt', DEFAULT_NEGATIVE_PROMPT),
@@ -94,26 +72,19 @@ def handler(job: dict) -> dict:
         "num_outputs": int(job_input.get('num_outputs', 1))
     }
     result_images, used_seeds = model.generate(**params)
-    if isinstance(result_images, Exception):
-        return {"error": f"Model generation failed: {str(result_images)}"}
-    output_extension = job_input.get('output_extension', 'jpeg').lower()
-    format_info = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
-    image_format = format_info['format']
-    base64_images = []
+    if isinstance(result_images, Exception): return {"error": f"Model generation failed: {str(result_images)}"}
+    output_extension: str = job_input.get('output_extension', 'jpeg').lower()
+    format_info: dict = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
+    image_format: str = format_info['format']
+    base64_images: list[str] = []
     for img in result_images:
-        if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA':
-            img = img.convert('RGB')
-        buffered = io.BytesIO()
+        if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA': img = img.convert('RGB')
+        buffered: io.BytesIO = io.BytesIO()
         img.save(buffered, format=image_format)
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        img_str: str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         base64_images.append(img_str)
-    return {
-        "images": base64_images,
-        "seeds": used_seeds
-    }
+    return {"images": base64_images, "seeds": used_seeds}
 
 if __name__ == "__main__":
-    runpod.serverless.start({
-        "handler": handler,
-        "initializer": initialize
-    })
+    print("Starting RunPod serverless worker...")
+    runpod.serverless.start({"handler": handler})
