@@ -85,24 +85,26 @@ class StagingModel:
         steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str,
         sr_scale: int, num_outputs: int = 1, system_prompt: str | None = None
     ):
-        t0 = time.perf_counter()
         final_system_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
         full_prompt = f"{final_system_prompt}{prompt}"
         
+        temp_img_path = None
         try:
+            temp_img_path = f"/tmp/input_image_{random.randint(1000, 99999)}.png"
             processed_image = self._resize_image(input_image.convert("RGB"), aspect_ratio)
+            processed_image.save(temp_img_path)
 
             if seed == -1:
                 seeds = [random.randint(0, MAX_SEED) for _ in range(num_outputs)]
             else:
                 seeds = [seed + i for i in range(num_outputs)]
             
-            final_images = []
+            batched_images = []
             for current_seed in seeds:
                 with torch.cuda.stream(self.inference_stream):
                     inp, height, width = prepare_kontext(
                         t5=self.t5, clip=self.clip, prompt=full_prompt, ae=self.ae,
-                        img_cond=processed_image,
+                        img_cond_path=temp_img_path, 
                         seed=current_seed, device=self.device, bs=1
                     )
                     
@@ -113,30 +115,27 @@ class StagingModel:
                     
                     latents = unpack(latents.float(), height, width)
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                        image_tensor = self.ae.decode(latents)
+                        image = self.ae.decode(latents)
                 
-                use_sr = super_resolution == "traditional" and sr_scale > 1
-                if use_sr:
-                    t_sr_start = time.perf_counter()
-                    image_tensor = torch.nn.functional.interpolate(
-                        image_tensor,
-                        scale_factor=sr_scale,
-                        mode='bicubic',
-                        align_corners=False
-                    )
-                    torch.cuda.synchronize() 
-                    t_sr_end = time.perf_counter()
-                    print(f"[PROFILE] GPU Super-Res took: {(t_sr_end - t_sr_start) * 1000:.2f} ms")
-
-                image = (image_tensor[0].clamp(-1, 1) + 1) / 2
+                image = (image[0].clamp(-1, 1) + 1) / 2
                 image = (image.permute(1, 2, 0) * 255).byte().cpu().numpy()
                 pil_image = Image.fromarray(image)
-                final_images.append(pil_image)
+                batched_images.append(pil_image)
 
-            t_end = time.perf_counter()
-            print(f"[PROFILE] Total `generate` Time for batch of {num_outputs}: {(t_end - t0) * 1000:.2f} ms")
+            final_images = []
+            if super_resolution == "traditional" and sr_scale > 1:
+                for img in batched_images:
+                    new_width = img.width * sr_scale
+                    new_height = img.height * sr_scale
+                    final_images.append(img.resize((new_width, new_height), Image.Resampling.LANCZOS))
+            else:
+                final_images = batched_images
+
             return final_images, seeds
 
         except Exception as e:
             traceback.print_exc()
             return e, []
+        finally:
+             if temp_img_path and os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
