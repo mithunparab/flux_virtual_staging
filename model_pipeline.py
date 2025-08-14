@@ -4,6 +4,7 @@ import random
 from PIL import Image
 from pathlib import Path
 import traceback
+import time
 
 from flux.util import load_ae
 from flux.sampling import get_schedule, denoise, unpack, prepare_kontext
@@ -22,7 +23,6 @@ class StagingModel:
         self.device = torch.device("cuda")
 
         base_volume_path = os.environ.get("NETWORK_VOLUME_PATH", "/runpod-volume")
-
         autoencoder_path = Path("./models/flux-dev-kontext")
         if not autoencoder_path.exists():
             raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found. It should have been downloaded on cold start.")
@@ -67,6 +67,7 @@ class StagingModel:
         
         print("StagingModel initialized successfully using only pre-compiled engines and local files.")
 
+
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
         if aspect_ratio == 'square':
             width, height = image.size
@@ -77,33 +78,32 @@ class StagingModel:
             bottom = (height + crop_size) / 2
             return image.crop((left, top, right, bottom))
         return image
-        
+
     @torch.inference_mode()
     def generate(
         self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float,
         steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str,
         sr_scale: int, num_outputs: int = 1, system_prompt: str | None = None
     ):
+        t0 = time.perf_counter()
         final_system_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
         full_prompt = f"{final_system_prompt}{prompt}"
         
-        temp_img_path = None
         try:
-            temp_img_path = f"/tmp/input_image_{random.randint(1000, 99999)}.png"
             processed_image = self._resize_image(input_image.convert("RGB"), aspect_ratio)
-            processed_image.save(temp_img_path)
 
             if seed == -1:
                 seeds = [random.randint(0, MAX_SEED) for _ in range(num_outputs)]
             else:
                 seeds = [seed + i for i in range(num_outputs)]
             
-            batched_images = []
+            final_images = []
             for current_seed in seeds:
                 with torch.cuda.stream(self.inference_stream):
                     inp, height, width = prepare_kontext(
                         t5=self.t5, clip=self.clip, prompt=full_prompt, ae=self.ae,
-                        img_cond_path=temp_img_path, seed=current_seed, device=self.device, bs=1
+                        img_cond=processed_image,
+                        seed=current_seed, device=self.device, bs=1
                     )
                     
                     timesteps = get_schedule(steps, inp["img"].shape[1], shift=True)
@@ -113,27 +113,30 @@ class StagingModel:
                     
                     latents = unpack(latents.float(), height, width)
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                        image = self.ae.decode(latents)
+                        image_tensor = self.ae.decode(latents)
                 
-                image = (image[0].clamp(-1, 1) + 1) / 2
+                use_sr = super_resolution == "traditional" and sr_scale > 1
+                if use_sr:
+                    t_sr_start = time.perf_counter()
+                    image_tensor = torch.nn.functional.interpolate(
+                        image_tensor,
+                        scale_factor=sr_scale,
+                        mode='bicubic',
+                        align_corners=False
+                    )
+                    torch.cuda.synchronize() 
+                    t_sr_end = time.perf_counter()
+                    print(f"[PROFILE] GPU Super-Res took: {(t_sr_end - t_sr_start) * 1000:.2f} ms")
+
+                image = (image_tensor[0].clamp(-1, 1) + 1) / 2
                 image = (image.permute(1, 2, 0) * 255).byte().cpu().numpy()
                 pil_image = Image.fromarray(image)
-                batched_images.append(pil_image)
+                final_images.append(pil_image)
 
-            final_images = []
-            if super_resolution == "traditional" and sr_scale > 1:
-                for img in batched_images:
-                    new_width = img.width * sr_scale
-                    new_height = img.height * sr_scale
-                    final_images.append(img.resize((new_width, new_height), Image.Resampling.LANCZOS))
-            else:
-                final_images = batched_images
-
+            t_end = time.perf_counter()
+            print(f"[PROFILE] Total `generate` Time for batch of {num_outputs}: {(t_end - t0) * 1000:.2f} ms")
             return final_images, seeds
 
         except Exception as e:
             traceback.print_exc()
             return e, []
-        finally:
-             if temp_img_path and os.path.exists(temp_img_path):
-                os.remove(temp_img_path)

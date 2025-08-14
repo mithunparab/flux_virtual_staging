@@ -1,94 +1,102 @@
 import os
 import base64
 import io
+import subprocess
+import time
 from PIL import Image
 import runpod
 from huggingface_hub import snapshot_download
 from pathlib import Path
+import torch
 
-model = None
+model: 'StagingModel' = None
 
-# rp_handler.py
-
-import os
-import base64
-import io
-import shutil  # <-- Import shutil
-from PIL import Image
-import runpod
-from huggingface_hub import snapshot_download
-from pathlib import Path
-
-model = None
-
-def initialize_model():
+def initialize() -> 'StagingModel':
+    """
+    Initializes the worker by copying engine files, downloading model files, setting environment variables,
+    initializing the model pipeline, and running a warm-up inference.
+    Returns:
+        StagingModel: The initialized model pipeline.
+    """
     global model
-    print("Cold start: Initializing StagingModel...")
-
-    source_engine_dir = Path("/runpod-volume/engines")
-    local_engine_dir = Path("/app/engines")
+    start_time: float = time.time()
+    source_engine_dir: Path = Path("/runpod-volume/engines")
+    local_engine_dir: Path = Path("/app/engines")
 
     if source_engine_dir.exists():
         if not local_engine_dir.exists():
-            print(f"Copying engines from {source_engine_dir} to local storage {local_engine_dir} for performance...")
-            shutil.copytree(source_engine_dir, local_engine_dir)
-            print("Engine copy complete.")
-        else:
-            print("Local engine directory already exists. Skipping copy.")
+            local_engine_dir.mkdir(parents=True, exist_ok=True)
+            rsync_command: list[str] = [
+                'rsync',
+                '-ah',
+                '--progress',
+                str(source_engine_dir) + '/',
+                str(local_engine_dir) + '/'
+            ]
+            result: subprocess.CompletedProcess = subprocess.run(rsync_command, check=False, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"rsync failed with exit code {result.returncode}")
         os.environ["NETWORK_VOLUME_PATH"] = "/app"
     else:
-        print(f"WARNING: Source engine directory {source_engine_dir} not found.")
-    
-    hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
-    if not hf_token:
-        raise ValueError("FATAL: HUGGING_FACE_HUB_TOKEN secret not found in runtime environment.")
+        os.environ["NETWORK_VOLUME_PATH"] = "/runpod-volume"
 
-    model_name = "black-forest-labs/FLUX.1-Kontext-dev"
-    local_path = Path("./models/flux-dev-kontext")
-    
-    print(f"Downloading base model '{model_name}' to {local_path}...")
-    snapshot_download(
-        repo_id=model_name,
-        local_dir=local_path,
-        token=hf_token,
-        local_dir_use_symlinks=False,
-        ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
-    )
-    print("Base model download complete.")
+    model_name: str = "black-forest-labs/FLUX.1-Kontext-dev"
+    local_path: Path = Path("./models/flux-dev-kontext")
+    if not local_path.exists() or not any(local_path.iterdir()):
+        snapshot_download(
+            repo_id=model_name,
+            local_dir=local_path,
+            local_dir_use_symlinks=False,
+            ignore_patterns=["*.safetensors", "*.onnx", "*.bin"]
+        )
 
     from model_pipeline import StagingModel
     os.environ["HOME"] = "/app"
     Path.home = lambda: Path("/app")
-    
     model = StagingModel()
-    print("StagingModel initialized successfully.")
 
+    try:
+        dummy_image: Image.Image = Image.new('RGB', (512, 512), 'white')
+        _ = model.generate(
+            prompt="warmup", input_image=dummy_image, seed=0,
+            guidance_scale=1.0, steps=2, negative_prompt="",
+            aspect_ratio="default", super_resolution="traditional",
+            sr_scale=1, num_outputs=1
+        )
+        torch.cuda.synchronize()
+    except Exception:
+        pass
 
-def handler(job):
+    end_time: float = time.time()
+    return model
+
+def handler(job: dict) -> dict:
+    """
+    Handles a job request by decoding input, running inference, and returning results.
+    Args:
+        job (dict): The job dictionary containing input parameters.
+    Returns:
+        dict: The result containing generated images and seeds, or error information.
+    """
     global model
-
-    if model is None:
-        initialize_model()
-
-    job_input = job.get('input', {})
-
-    image_base64 = job_input.get('image_base64')
+    job_input: dict = job.get('input', {})
+    image_base64: str = job_input.get('image_base64')
     if not image_base64:
         return {"error": "Missing 'image_base64' in input."}
 
-    prompt = job_input.get('prompt')
+    prompt: str = job_input.get('prompt')
     if not prompt:
         return {"error": "Missing 'prompt' in input."}
 
     try:
-        image_bytes = base64.b64decode(image_base64)
-        input_image = Image.open(io.BytesIO(image_bytes))
+        image_bytes: bytes = base64.b64decode(image_base64)
+        input_image: Image.Image = Image.open(io.BytesIO(image_bytes))
     except Exception as e:
         return {"error": f"Invalid base64 string or image format: {e}"}
 
     from config import DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
 
-    params = {
+    params: dict = {
         "prompt": prompt,
         "input_image": input_image,
         "negative_prompt": job_input.get('negative_prompt', DEFAULT_NEGATIVE_PROMPT),
@@ -101,34 +109,31 @@ def handler(job):
         "num_outputs": int(job_input.get('num_outputs', 1))
     }
 
-    print(f"Starting batch generation of {params['num_outputs']} with base seed: {params['seed']}")
     result_images, used_seeds = model.generate(**params)
 
     if isinstance(result_images, Exception):
-        print(f"Model generation failed: {result_images}")
-        return {"error": f"Model generation failed: {result_images}"}
+        return {"error": f"Model generation failed: {str(result_images)}"}
 
-    output_extension = job_input.get('output_extension', 'jpeg').lower()
-    format_info = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
-    image_format = format_info['format']
-    
-    base64_images = []
+    output_extension: str = job_input.get('output_extension', 'jpeg').lower()
+    format_info: dict = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
+    image_format: str = format_info['format']
+
+    base64_images: list[str] = []
     for img in result_images:
         if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA':
             img = img.convert('RGB')
-        
-        buffered = io.BytesIO()
+        buffered: io.BytesIO = io.BytesIO()
         img.save(buffered, format=image_format)
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        img_str: str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         base64_images.append(img_str)
 
-    print(f"Batch generation of {len(base64_images)} images complete.")
-    
     return {
         "images": base64_images,
         "seeds": used_seeds
     }
 
 if __name__ == "__main__":
-    print("Starting RunPod serverless worker...")
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start({
+        "handler": handler,
+        "initializer": initialize
+    })

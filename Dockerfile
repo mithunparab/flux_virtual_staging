@@ -12,7 +12,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    git libgl1 curl ca-certificates \
+    git libgl1 curl ca-certificates rsync \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m venv /opt/venv \
