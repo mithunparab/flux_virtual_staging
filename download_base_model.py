@@ -5,7 +5,7 @@ from pathlib import Path
 if __name__ == "__main__":
 
     model_name = "black-forest-labs/FLUX.1-Kontext-dev"
-    local_path = Path("./models/flux-dev-kontext")
+    local_path = Path("../models/flux-dev-kontext")
 
     print(f"Downloading base model '{model_name}' for runtime...")
     snapshot_download(

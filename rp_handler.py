@@ -9,39 +9,31 @@ from huggingface_hub import snapshot_download
 from pathlib import Path
 import torch
 
-model: 'StagingModel' = None
+model = None
 
-def initialize() -> 'StagingModel':
-    """
-    Initializes the worker by copying engine files, downloading model files, setting environment variables,
-    initializing the model pipeline, and running a warm-up inference.
-    Returns:
-        StagingModel: The initialized model pipeline.
-    """
+def initialize():
     global model
-    start_time: float = time.time()
-    source_engine_dir: Path = Path("/runpod-volume/engines")
-    local_engine_dir: Path = Path("/app/engines")
+    start_time = time.time()
+    source_engine_dir = Path("/runpod-volume/engines")
+    local_engine_dir = Path("/app/engines")
 
     if source_engine_dir.exists():
         if not local_engine_dir.exists():
             local_engine_dir.mkdir(parents=True, exist_ok=True)
-            rsync_command: list[str] = [
-                'rsync',
-                '-ah',
-                '--progress',
+            rsync_command = [
+                'rsync', '-ah', '--progress',
                 str(source_engine_dir) + '/',
                 str(local_engine_dir) + '/'
             ]
-            result: subprocess.CompletedProcess = subprocess.run(rsync_command, check=False, capture_output=True, text=True)
+            result = subprocess.run(rsync_command, check=False, capture_output=True, text=True)
             if result.returncode != 0:
                 raise RuntimeError(f"rsync failed with exit code {result.returncode}")
         os.environ["NETWORK_VOLUME_PATH"] = "/app"
     else:
         os.environ["NETWORK_VOLUME_PATH"] = "/runpod-volume"
 
-    model_name: str = "black-forest-labs/FLUX.1-Kontext-dev"
-    local_path: Path = Path("./models/flux-dev-kontext")
+    model_name = "black-forest-labs/FLUX.1-Kontext-dev"
+    local_path = Path("./models/flux-dev-kontext")
     if not local_path.exists() or not any(local_path.iterdir()):
         snapshot_download(
             repo_id=model_name,
@@ -54,9 +46,8 @@ def initialize() -> 'StagingModel':
     os.environ["HOME"] = "/app"
     Path.home = lambda: Path("/app")
     model = StagingModel()
-
     try:
-        dummy_image: Image.Image = Image.new('RGB', (512, 512), 'white')
+        dummy_image = Image.new('RGB', (512, 512), 'white')
         _ = model.generate(
             prompt="warmup", input_image=dummy_image, seed=0,
             guidance_scale=1.0, steps=2, negative_prompt="",
@@ -66,37 +57,27 @@ def initialize() -> 'StagingModel':
         torch.cuda.synchronize()
     except Exception:
         pass
-
-    end_time: float = time.time()
+    end_time = time.time()
     return model
 
 def handler(job: dict) -> dict:
-    """
-    Handles a job request by decoding input, running inference, and returning results.
-    Args:
-        job (dict): The job dictionary containing input parameters.
-    Returns:
-        dict: The result containing generated images and seeds, or error information.
-    """
     global model
-    job_input: dict = job.get('input', {})
-    image_base64: str = job_input.get('image_base64')
+    if model is None:
+        model = job["model"]
+    job_input = job.get('input', {})
+    image_base64 = job_input.get('image_base64')
     if not image_base64:
         return {"error": "Missing 'image_base64' in input."}
-
-    prompt: str = job_input.get('prompt')
+    prompt = job_input.get('prompt')
     if not prompt:
         return {"error": "Missing 'prompt' in input."}
-
     try:
-        image_bytes: bytes = base64.b64decode(image_base64)
-        input_image: Image.Image = Image.open(io.BytesIO(image_bytes))
+        image_bytes = base64.b64decode(image_base64)
+        input_image = Image.open(io.BytesIO(image_bytes))
     except Exception as e:
         return {"error": f"Invalid base64 string or image format: {e}"}
-
     from config import DEFAULT_GUIDANCE_SCALE, DEFAULT_STEPS, DEFAULT_NEGATIVE_PROMPT, SUPPORTED_FORMATS
-
-    params: dict = {
+    params = {
         "prompt": prompt,
         "input_image": input_image,
         "negative_prompt": job_input.get('negative_prompt', DEFAULT_NEGATIVE_PROMPT),
@@ -108,25 +89,20 @@ def handler(job: dict) -> dict:
         "sr_scale": int(job_input.get('sr_scale', 2)),
         "num_outputs": int(job_input.get('num_outputs', 1))
     }
-
     result_images, used_seeds = model.generate(**params)
-
     if isinstance(result_images, Exception):
         return {"error": f"Model generation failed: {str(result_images)}"}
-
-    output_extension: str = job_input.get('output_extension', 'jpeg').lower()
-    format_info: dict = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
-    image_format: str = format_info['format']
-
-    base64_images: list[str] = []
+    output_extension = job_input.get('output_extension', 'jpeg').lower()
+    format_info = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
+    image_format = format_info['format']
+    base64_images = []
     for img in result_images:
         if image_format in ['JPEG', 'BMP'] and img.mode == 'RGBA':
             img = img.convert('RGB')
-        buffered: io.BytesIO = io.BytesIO()
+        buffered = io.BytesIO()
         img.save(buffered, format=image_format)
-        img_str: str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         base64_images.append(img_str)
-
     return {
         "images": base64_images,
         "seeds": used_seeds
