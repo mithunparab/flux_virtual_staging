@@ -29,4 +29,6 @@ RUN uv pip install -r requirements.lock --extra-index-url https://pypi.nvidia.co
 
 COPY . .
 
-CMD ["python", "-u", "rp_handler.py"]
+RUN chmod +x run.sh
+
+CMD ["./run.sh"]
