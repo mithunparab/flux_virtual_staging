@@ -117,6 +117,8 @@ class StagingModel:
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                         image = self.ae.decode(latents)
                 
+                torch.cuda.synchronize()
+
                 image = (image[0].clamp(-1, 1) + 1) / 2
                 image = (image.permute(1, 2, 0) * 255).byte().cpu().numpy()
                 pil_image = Image.fromarray(image)
