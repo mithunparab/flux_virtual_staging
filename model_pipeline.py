@@ -34,27 +34,56 @@ class StagingModel:
         return pipe
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
+        width, height = image.size
+        
+        target_width, target_height = width, height
+
         if aspect_ratio == 'square':
             print("Applying center crop to create a square image...")
-            width, height = image.size
-            
             crop_size = min(width, height)
-            
-            left = (width - crop_size) / 2
-            top = (height - crop_size) / 2
-            right = (width + crop_size) / 2
-            bottom = (height + crop_size) / 2
-
+            left, top = (width - crop_size) / 2, (height - crop_size) / 2
+            right, bottom = (width + crop_size) / 2, (height + crop_size) / 2
             image = image.crop((left, top, right, bottom))
+            target_width, target_height = MAX_IMAGE_SIZE, MAX_IMAGE_SIZE
             
-            if image.width > MAX_IMAGE_SIZE:
-                 image = image.resize((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.LANCZOS)
-            print(f"Cropped and resized image to square: {image.size}")
-        else:  
-            if max(image.size) > MAX_IMAGE_SIZE:
-                image.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.LANCZOS)
-                print(f"Resized image to {image.size} to fit within {MAX_IMAGE_SIZE}x{MAX_IMAGE_SIZE}")
+        elif aspect_ratio == 'portrait':
+            print("Applying crop for portrait (2:3) aspect ratio...")
+            target_ratio = 2 / 3
+            current_ratio = width / height
+            if current_ratio > target_ratio: 
+                new_width = int(target_ratio * height)
+                left, top = (width - new_width) / 2, 0
+                right, bottom = left + new_width, height
+            else: 
+                new_height = int(width / target_ratio)
+                left, top = 0, (height - new_height) / 2
+                right, bottom = width, top + new_height
+            image = image.crop((left, top, right, bottom))
+            target_height = MAX_IMAGE_SIZE
+            target_width = int(MAX_IMAGE_SIZE * target_ratio)
+
+        elif aspect_ratio == 'landscape':
+            print("Applying crop for landscape (3:2) aspect ratio...")
+            target_ratio = 3 / 2
+            current_ratio = width / height
+            if current_ratio > target_ratio: 
+                new_width = int(target_ratio * height)
+                left, top = (width - new_width) / 2, 0
+                right, bottom = left + new_width, height
+            else: 
+                new_height = int(width / target_ratio)
+                left, top = 0, (height - new_height) / 2
+                right, bottom = width, top + new_height
+            image = image.crop((left, top, right, bottom))
+            target_width = MAX_IMAGE_SIZE
+            target_height = int(MAX_IMAGE_SIZE / target_ratio)
+        
+        if max(image.size) > MAX_IMAGE_SIZE:
+             print(f"Resizing image from {image.size} to fit within ({target_width}, {target_height})")
+             image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        
         return image
+
 
     @contextmanager
     def _inference_context(self):
@@ -67,10 +96,11 @@ class StagingModel:
             gc.collect()
             print("GPU memory cleaned up after inference.")
 
-    def generate(self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float, steps: int, negative_prompt: str, aspect_ratio: str, super_resolution: str, sr_scale: int):
+    def generate(self, prompt: str, input_image: Image.Image, seed: int, guidance_scale: float, steps: int, negative_prompt: str, num_outputs: int, aspect_ratio: str, super_resolution: str, sr_scale: int):
         full_prompt = f"{SYSTEM_PROMPT}{prompt}"
         print(f"Using full prompt: {full_prompt}")
         print(f"Using negative prompt: {negative_prompt}")
+        print(f"Generating {num_outputs} image(s)...")
 
         with self._inference_context():
             try:
@@ -78,7 +108,7 @@ class StagingModel:
                     input_image = input_image.convert("RGB")
                     input_image = self._resize_image(input_image, aspect_ratio)
 
-                    image_result = self.pipe(
+                    images_result = self.pipe(
                         image=input_image,
                         prompt=full_prompt,
                         negative_prompt=negative_prompt,
@@ -86,16 +116,20 @@ class StagingModel:
                         width=input_image.size[0],
                         height=input_image.size[1],
                         num_inference_steps=steps,
+                        num_images_per_prompt=num_outputs,
                         generator=torch.Generator("cuda").manual_seed(seed),
-                    ).images[0]
+                    ).images
                 
                 if super_resolution == "traditional" and sr_scale > 1:
                     print(f"Applying traditional super resolution with scale x{sr_scale}")
-                    new_width = image_result.width * sr_scale
-                    new_height = image_result.height * sr_scale
-                    image_result = image_result.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    final_images = []
+                    for img in images_result:
+                        new_width = img.width * sr_scale
+                        new_height = img.height * sr_scale
+                        final_images.append(img.resize((new_width, new_height), Image.Resampling.LANCZOS))
+                    return final_images
 
-                return image_result
+                return images_result
 
             except Exception as e:
                 print(f"An error occurred during inference: {e}")

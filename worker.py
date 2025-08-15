@@ -16,6 +16,7 @@ def processing_worker(model: StagingModel, job_queue: Queue, results_store: dict
                 guidance_scale=job_data["guidance_scale"],
                 steps=job_data["steps"],
                 negative_prompt=job_data["negative_prompt"],
+                num_outputs=job_data.get("num_outputs", 1),
                 aspect_ratio=job_data.get("aspect_ratio", "default"),
                 super_resolution=job_data.get("super_resolution", "traditional"),
                 sr_scale=job_data.get("sr_scale", 2)

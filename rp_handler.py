@@ -47,6 +47,7 @@ def handler(job):
         "seed": int(job_input.get('seed', -1)),
         "guidance_scale": float(job_input.get('guidance_scale', DEFAULT_GUIDANCE_SCALE)),
         "steps": int(job_input.get('steps', DEFAULT_STEPS)),
+        "num_outputs": int(job_input.get('num_outputs', 1)),
         "aspect_ratio": job_input.get('aspect_ratio', "default"),
         "super_resolution": job_input.get('super_resolution', "traditional"),
         "sr_scale": int(job_input.get('sr_scale', 2))
@@ -56,27 +57,30 @@ def handler(job):
         params["seed"] = random.randint(0, MAX_SEED)
 
     print(f"Starting generation with seed: {params['seed']}")
-    result = model.generate(**params)
+    results = model.generate(**params)
 
-    if isinstance(result, Exception):
-        print(f"Model generation failed: {result}")
-        return {"error": f"Model generation failed: {result}"}
+    if isinstance(results, Exception):
+        print(f"Model generation failed: {results}")
+        return {"error": f"Model generation failed: {results}"}
 
     output_extension = job_input.get('output_extension', 'jpeg').lower()
     format_info = SUPPORTED_FORMATS.get(output_extension, SUPPORTED_FORMATS['jpeg'])
     image_format = format_info['format']
     
-    if image_format in ['JPEG', 'BMP'] and result.mode == 'RGBA':
-        result = result.convert('RGB')
-        
-    buffered = io.BytesIO()
-    result.save(buffered, format=image_format)
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    base64_images = []
+    for image in results:
+        if image_format in ['JPEG', 'BMP'] and image.mode == 'RGBA':
+            image = image.convert('RGB')
+            
+        buffered = io.BytesIO()
+        image.save(buffered, format=image_format)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        base64_images.append(img_str)
 
-    print("Generation complete.")
+    print(f"Generation complete. Returning {len(base64_images)} image(s).")
     
     return {
-        "image_base64": img_str,
+        "images_base64": base64_images,
         "seed": params["seed"]
     }
 
