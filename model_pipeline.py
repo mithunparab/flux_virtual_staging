@@ -63,7 +63,7 @@ class StagingModel:
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         
-        self.ae = load_ae("flux-dev-kontext", cache_dir=str(autoencoder_path.parent), device=self.device)
+        self.ae = load_ae("flux-dev-kontext", device=self.device)
         
         print("StagingModel initialized successfully using only pre-compiled engines and local files.")
 
