@@ -22,18 +22,29 @@ class StagingModel:
         gpu_type = os.environ.get("GPU_TYPE", "H100").upper()
         self.device = torch.device("cuda")
 
-        base_volume_path = os.environ.get("NETWORK_VOLUME_PATH", "/runpod-volume")
-        autoencoder_path = Path(base_volume_path) / "models" / "flux-dev-kontext"
-        if not autoencoder_path.exists():
-            raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found on the network volume.")
+        local_cache_path = Path("/app/local_model_cache")
+        network_volume_path = Path(os.environ.get("NETWORK_VOLUME_PATH", "/runpod-volume"))
 
-        engine_dir = Path(base_volume_path) / "engines" / gpu_type / "flux-dev-kontext"
+        if (local_cache_path / "engines").exists() and (local_cache_path / "models").exists():
+            print("--- Loading models from fast LOCAL CACHE ---")
+            base_model_path = local_cache_path / "models"
+            base_engine_path = local_cache_path / "engines"
+        else:
+            print("--- WARNING: Local cache not found. Loading models from slow NETWORK VOLUME. ---")
+            base_model_path = network_volume_path / "models"
+            base_engine_path = network_volume_path / "engines"
+            
+        autoencoder_path = base_model_path / "flux-dev-kontext"
+        if not autoencoder_path.exists():
+            raise FileNotFoundError(f"FATAL: Autoencoder path '{autoencoder_path}' not found.")
+
+        engine_dir = base_engine_path / gpu_type / "flux-dev-kontext"
         
         print(f"Initializing StagingModel for GPU: {gpu_type}")
-        print(f"Loading engines directly from: {engine_dir}")
+        print(f"Loading assets from: {engine_dir.parent.parent}")
 
         if not engine_dir.exists():
-            raise FileNotFoundError(f"FATAL: Engine directory '{engine_dir}' not found on the network volume.")
+            raise FileNotFoundError(f"FATAL: Engine directory '{engine_dir}' not found.")
 
         transformer_precision = "fp8" if gpu_type == "H100" else "bf16"
         
@@ -63,9 +74,9 @@ class StagingModel:
         self.t5 = T5Engine(t5_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         self.transformer = TransformerEngine(transformer_config, stream=self.inference_stream, context_memory=self.context_memory).to(self.device)
         
-        self.ae = load_ae("flux-dev-kontext", device=self.device)
+        self.ae = load_ae("flux-dev-kontext", cache_dir=str(base_model_path), device=self.device)
         
-        print("StagingModel initialized successfully using only pre-compiled engines and local files.")
+        print("StagingModel initialized successfully.")
 
 
     def _resize_image(self, image: Image.Image, aspect_ratio: str) -> Image.Image:
