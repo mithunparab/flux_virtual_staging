@@ -7,7 +7,7 @@ MAX_SEED = np.iinfo(np.int32).max
 DEFAULT_GUIDANCE_SCALE = 2.5
 DEFAULT_STEPS = 28
 
-SYSTEM_PROMPT = "Maintain the background wall, floor, and windows of the room. Only add furniture and objects into the foreground. "
+SYSTEM_PROMPT = "Maintain the background wall, doors, windows, ceiling, and floor of the room. Only add furniture and objects into the foreground.  "
 
 DEFAULT_NEGATIVE_PROMPT = "blurry, low quality, unrealistic, bad lighting, watermark, text, signature, deformed, ugly, disfigured, distorted"
 

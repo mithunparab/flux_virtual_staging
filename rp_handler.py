@@ -15,8 +15,6 @@ def _initialize():
     print("--- [HANDLER COLD START] Performing one-time model initialization... ---")
     start_time = time.time()
     try:
-        os.environ["NETWORK_VOLUME_PATH"] = "/app"
-        print("[INIT] Initializing StagingModel class...")
         from model_pipeline import StagingModel
         os.environ["HOME"] = "/app"
         Path.home = lambda: Path("/app")
