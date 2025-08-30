@@ -29,6 +29,9 @@ RUN uv pip install -r requirements.lock --extra-index-url https://pypi.nvidia.co
 
 COPY . .
 
+COPY _engines/ /app/engines/
+COPY _models/ /app/models/
+
 RUN chmod +x run.sh
 
 CMD ["./run.sh"]
