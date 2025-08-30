@@ -2,22 +2,39 @@ load("@rules_pkg//:pkg.bzl", "pkg_tar")
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push")
 load("@rules_python//python:defs.bzl", "py_binary")
 
+load("@rules_python//python:packaging.bzl", "py_layer")
+
 py_binary(
     name = "handler_with_deps",
-    srcs = ["rp_handler.py"],
+    srcs = glob(
+        ["*.py"],
+        exclude = [
+            "build_engines.py",
+            "download_base_model.py",
+        ],
+    ),
+    main = "rp_handler.py",
     python_version = "PY3",
-
     deps = [
         "@pip//runpod",
         "@pip//fastapi",
         "@pip//gradio",
+        "@pip//pillow",
+        "@pip//torch",
+        "@pip//numpy",
+        "@pip//opencv_python",
     ],
+)
+
+py_layer(
+    name = "handler_layer",
+    dep = ":handler_with_deps",
+    base = "//app",
 )
 
 pkg_tar(
     name = "app_layer",
     srcs = glob([
-        "*.py",
         "*.sh",
         "*.md",
         "requirements.lock",
@@ -40,20 +57,18 @@ pkg_tar(
     package_dir = "/app/models",
 )
 
-
 oci_image(
     name = "image",
     base = "@base_image_repo_linux_amd64",
     tars = [
         ":app_layer",
+        ":handler_layer",
         ":engines_layer",
         ":models_layer",
     ],
     entrypoint = [
-        # This is the standard path where py_binary puts the executable launcher
         "/app/handler_with_deps",
     ],
-    files = [":handler_with_deps"],
 )
 
 oci_push(

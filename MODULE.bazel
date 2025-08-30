@@ -23,9 +23,9 @@ use_repo(
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 
 pip.parse(
-    name = "pip", 
+    hub_name = "pip",
     requirements_lock = "//:requirements.lock",
-    requirements_txt = "//:requirements.txt", 
+    python_version = "3.11",
 )
 
 use_repo(pip, "pip")
